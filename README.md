@@ -87,6 +87,49 @@ For playtest-only multi-day simulation, the server exposes:
 
 These endpoints are **DEV ONLY** tooling for testing and are labeled as such in the UI.
 
+## Testing: multi-user and multi-day
+
+### API smoke test script (curl)
+
+Use the helper script:
+
+```bash
+./scripts/test_api.sh "https://<playtest-base-url>" [cookie_file]
+```
+
+Flow covered:
+
+1. `GET /api/me`
+2. `POST /api/join`
+3. `POST /api/checkin` (once)
+4. `POST /api/checkin` (again) to verify the friendly duplicate-checkin error
+5. `POST /api/privacy` to private, then `GET /api/leaderboard`
+6. `POST /api/privacy` to public, then `GET /api/leaderboard`
+
+If auth cookies are required for your playtest URL:
+
+- Export cookies from your browser into a Netscape-format cookie file (for example with a browser cookie export extension).
+- Pass that file as the second argument so curl sends/updates the session cookie.
+
+### Multi-user testing
+
+Use separate browser profiles (or private windows with separate login sessions) to simulate different Reddit accounts:
+
+- Profile A: moderator/admin account
+- Profile B/C: regular user accounts
+
+This lets you verify leaderboard ordering, privacy behavior, and per-user streak state independently.
+
+### Multi-day testing (time travel)
+
+Use the in-app **Dev Time Panel** (moderator-only) to set `devDayOffset`:
+
+- `+1 day` to simulate tomorrow
+- `-1 day` to simulate yesterday
+- `Reset to 0` to return to real UTC day
+
+Warning shown in UI/API: **DEV ONLY: Simulates day changes for testing.**
+
 ## If upload starts creating new apps again
 
 1. Verify the linked app name in `devvit.json`:
