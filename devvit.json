@@ -14,7 +14,7 @@
     "entrypoints": {
       "default": {
         "inline": true,
-        "entry": "game.html"
+        "entry": "app.html"
       }
     }
   },

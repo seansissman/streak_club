@@ -17,7 +17,7 @@ export const Splash = () => {
 
       <button
         className="flex items-center justify-center bg-[#0f6fff] hover:bg-[#0c5ad0] text-white w-auto h-11 rounded-full cursor-pointer transition-colors px-5 font-semibold"
-        onClick={(e) => requestExpandedMode(e.nativeEvent, 'game')}
+        onClick={(e) => requestExpandedMode(e.nativeEvent, 'app')}
       >
         Open Streak Dashboard
       </button>
