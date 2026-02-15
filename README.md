@@ -2,32 +2,52 @@
 
 Streak Engine is a Devvit Web app for running and tracking streak-based gameplay on Reddit.
 
-## Setup
+## WSL Setup (Ubuntu + bash)
 
-1. Install dependencies:
+1. Install Node.js and npm if needed:
+
+```bash
+node --version || sudo apt-get update && sudo apt-get install -y nodejs npm
+```
+
+2. Install dependencies:
 
 ```bash
 npm install
 ```
 
-2. Authenticate with Devvit (if not already logged in):
+3. Install the Devvit CLI if needed:
 
 ```bash
-npx devvit login
+devvit --version || npm install -g devvit
 ```
 
-## Deploy and Test
-
-Upload the app:
+4. Authenticate with Devvit:
 
 ```bash
-npx devvit upload
+devvit login
 ```
 
-Start playtest:
+5. Upload and playtest:
 
 ```bash
-npx devvit playtest
+npm run devvit:upload
+npm run devvit:playtest
+```
+
+## Local Development
+
+Run the local web build watcher:
+
+```bash
+npm run dev
 ```
 
 Daily reset is at **00:00 UTC**.
+
+## Quick Command Reference
+
+```bash
+npm run devvit:upload
+npm run devvit:playtest
+```
