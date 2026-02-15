@@ -164,13 +164,22 @@ const App = () => {
     return () => window.clearInterval(timer);
   }, [me?.nextResetUtcTimestamp]);
 
-  const stateLabel = useMemo(() => {
+  const isJoined = Boolean(me?.state);
+  const hasCheckedInToday = useMemo(() => {
     if (!me?.state) {
-      return 'not_joined';
+      return false;
     }
 
-    return me.checkedInToday ? 'checked_in' : 'joined_not_checked_in';
-  }, [me]);
+    if (typeof me.checkedInToday === 'boolean') {
+      return me.checkedInToday;
+    }
+
+    if (devTime?.effectiveDayNumber == null || me.state.lastCheckinDayUTC == null) {
+      return false;
+    }
+
+    return me.state.lastCheckinDayUTC === devTime.effectiveDayNumber;
+  }, [devTime?.effectiveDayNumber, me]);
 
   const refreshAfterAction = useCallback(async () => {
     await loadAll();
@@ -194,6 +203,10 @@ const App = () => {
   }, [refreshAfterAction]);
 
   const onCheckIn = useCallback(async () => {
+    if (!isJoined || hasCheckedInToday) {
+      return;
+    }
+
     try {
       setActionLoading(true);
       setError(null);
@@ -209,7 +222,7 @@ const App = () => {
     } finally {
       setActionLoading(false);
     }
-  }, [refreshAfterAction]);
+  }, [hasCheckedInToday, isJoined, refreshAfterAction]);
 
   const onSetPrivacy = useCallback(
     async (privacy: Privacy) => {
@@ -287,7 +300,7 @@ const App = () => {
             </div>
           </div>
 
-          {stateLabel === 'not_joined' && (
+          {!isJoined && (
             <button
               className="w-full h-12 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold disabled:opacity-60"
               onClick={onJoin}
@@ -297,7 +310,7 @@ const App = () => {
             </button>
           )}
 
-          {stateLabel === 'joined_not_checked_in' && (
+          {isJoined && !hasCheckedInToday && (
             <button
               className="w-full h-12 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold disabled:opacity-60"
               onClick={onCheckIn}
@@ -307,7 +320,7 @@ const App = () => {
             </button>
           )}
 
-          {stateLabel === 'checked_in' && (
+          {isJoined && hasCheckedInToday && (
             <div className="w-full rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 p-3 font-semibold text-center">
               ✅ Checked in today
             </div>
