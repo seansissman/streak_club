@@ -60,6 +60,21 @@ This repo is linked to a Devvit app via `devvit.json`, specifically the `"name"`
 - This file is safe to commit and should be versioned to keep uploads stable across machines/sessions.
 - Devvit auth/session tokens are stored outside the repo under `~/.devvit/` and should never be committed.
 
+### Name guardrail
+
+To prevent accidental app renames that can trigger new-app creation during upload, this repo includes:
+
+- `.devvit-app-name` (expected app name)
+- `scripts/check-devvit-name.sh` (validation script)
+
+Run the check manually:
+
+```bash
+npm run check:name
+```
+
+If the app rename is intentional, update both `devvit.json` `"name"` and `.devvit-app-name` in the same change.
+
 ## If upload starts creating new apps again
 
 1. Verify the linked app name in `devvit.json`:

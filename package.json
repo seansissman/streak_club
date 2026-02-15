@@ -10,6 +10,7 @@
     "dev": "vite build --watch",
     "devvit:upload": "devvit upload",
     "devvit:playtest": "devvit playtest",
+    "check:name": "bash ./scripts/check-devvit-name.sh",
     "launch": "npm run deploy && devvit publish",
     "lint": "eslint 'src/**/*.{ts,tsx}'",
     "login": "devvit login",
