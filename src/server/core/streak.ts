@@ -13,6 +13,11 @@ export type ChallengeConfig = {
   createdAt: string;
 };
 
+export type ChallengeConfigUpdate = {
+  title: string;
+  description: string;
+};
+
 export type UserState = {
   joinedAt: string;
   privacy: Privacy;
@@ -171,6 +176,28 @@ export const ensureChallengeConfig = async (
 export const getChallengeConfig = async (
   subredditId: string
 ): Promise<ChallengeConfig> => ensureChallengeConfig(subredditId);
+
+export const setChallengeConfig = async (
+  subredditId: string,
+  update: ChallengeConfigUpdate
+): Promise<ChallengeConfig> => {
+  const existing = await ensureChallengeConfig(subredditId);
+  const next: ChallengeConfig = {
+    ...existing,
+    title: update.title,
+    description: update.description,
+    timezone: UTC_TIMEZONE,
+  };
+
+  await redis.hSet(keys.challengeConfig(subredditId), {
+    title: next.title,
+    description: next.description,
+    timezone: next.timezone,
+    createdAt: next.createdAt,
+  });
+
+  return next;
+};
 
 export const getUserState = async (
   subredditId: string,

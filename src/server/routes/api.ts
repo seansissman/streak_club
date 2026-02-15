@@ -1,40 +1,55 @@
 import { Hono } from 'hono';
-import { context } from '@devvit/web/server';
+import type { Context as HonoContext } from 'hono';
+import { context, reddit } from '@devvit/web/server';
 import {
-  applyCheckIn,
-  canCheckIn,
   ensureChallengeConfig,
   getLeaderboard,
   getUserState,
   joinChallenge,
   recordCheckIn,
+  setChallengeConfig,
   setPrivacy,
   utcDayNumber,
   type Privacy,
+  type UserState,
 } from '../core/streak';
 
 type ErrorResponse = {
   status: 'error';
+  code: string;
   message: string;
+  state?: UserState | null;
 };
 
-type JoinRequest = {
-  privacy?: Privacy;
+type ConfigRequest = {
+  title?: string;
+  description?: string;
 };
 
 type PrivacyRequest = {
-  privacy: Privacy;
+  privacy?: Privacy;
 };
 
-const parsePrivacy = (value: unknown): Privacy =>
-  value === 'private' ? 'private' : 'public';
+const MILLISECONDS_PER_DAY = 86_400_000;
+type HttpStatus = 400 | 401 | 403 | 404 | 409 | 500;
 
-const requireSubredditId = (): string => {
-  if (!context.subredditId) {
-    throw new Error('subredditId is required in context');
+const jsonError = (
+  c: HonoContext,
+  status: HttpStatus,
+  code: string,
+  message: string,
+  state?: UserState | null
+) => c.json<ErrorResponse>({ status: 'error', code, message, state }, status);
+
+const requireSubredditContext = (): { subredditId: string; subredditName: string } => {
+  if (!context.subredditId || !context.subredditName) {
+    throw new Error('subreddit context is required');
   }
 
-  return context.subredditId;
+  return {
+    subredditId: context.subredditId,
+    subredditName: context.subredditName,
+  };
 };
 
 const requireUserId = (): string => {
@@ -45,191 +60,268 @@ const requireUserId = (): string => {
   return context.userId;
 };
 
+const parsePrivacy = (value: unknown): Privacy | null => {
+  if (value === 'public' || value === 'private') {
+    return value;
+  }
+
+  return null;
+};
+
+const nextResetUtcTimestamp = (now: Date): number => {
+  const day = utcDayNumber(now);
+  return (day + 1) * MILLISECONDS_PER_DAY;
+};
+
+const checkedInToday = (state: UserState | null, day: number): boolean =>
+  state?.lastCheckinDayUTC === day;
+
+const isModerator = async (
+  subredditName: string,
+  username: string
+): Promise<boolean> => {
+  const moderators = await reddit
+    .getModerators({
+      subredditName,
+      username,
+      limit: 1,
+      pageSize: 1,
+    })
+    .all();
+
+  return moderators.some(
+    (mod) => mod.username.toLowerCase() === username.toLowerCase()
+  );
+};
+
 export const api = new Hono();
 
-api.get('/challenge', async (c) => {
+api.get('/config', async (c) => {
   try {
-    const subredditId = requireSubredditId();
-    const challenge = await ensureChallengeConfig(subredditId);
+    const { subredditId } = requireSubredditContext();
+    const config = await ensureChallengeConfig(subredditId);
 
     return c.json({
-      type: 'challenge',
-      challenge,
-      subredditId,
+      status: 'ok',
+      config,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return c.json<ErrorResponse>({ status: 'error', message }, 400);
+    return jsonError(c, 400, 'CONFIG_READ_FAILED', message);
   }
 });
 
-api.get('/me', async (c) => {
+api.post('/config', async (c) => {
   try {
-    const subredditId = requireSubredditId();
-    const userId = requireUserId();
+    const { subredditId, subredditName } = requireSubredditContext();
+    const username = context.username;
 
-    await ensureChallengeConfig(subredditId);
+    if (!username) {
+      return jsonError(
+        c,
+        401,
+        'AUTH_REQUIRED',
+        'You must be logged in to update challenge config'
+      );
+    }
 
-    const day = utcDayNumber(new Date());
-    const user = await getUserState(subredditId, userId);
+    if (!(await isModerator(subredditName, username))) {
+      return jsonError(
+        c,
+        403,
+        'MODERATOR_REQUIRED',
+        'Only moderators can update challenge config'
+      );
+    }
+
+    const body = await c.req
+      .json<ConfigRequest>()
+      .catch(() => ({} as ConfigRequest));
+    const title = body.title?.trim();
+    const description = body.description?.trim();
+
+    if (!title || !description) {
+      return jsonError(
+        c,
+        400,
+        'INVALID_CONFIG',
+        'title and description are required'
+      );
+    }
+
+    const config = await setChallengeConfig(subredditId, {
+      title,
+      description,
+    });
 
     return c.json({
-      type: 'me',
-      userId,
-      user,
-      utcDay: day,
-      canCheckIn: user ? canCheckIn(user, day) : false,
+      status: 'ok',
+      config,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return c.json<ErrorResponse>({ status: 'error', message }, 401);
+    return jsonError(c, 400, 'CONFIG_WRITE_FAILED', message);
   }
 });
 
 api.post('/join', async (c) => {
   try {
-    const subredditId = requireSubredditId();
+    const { subredditId } = requireSubredditContext();
     const userId = requireUserId();
 
     await ensureChallengeConfig(subredditId);
-
-    const input = await c.req
-      .json<JoinRequest>()
-      .catch(() => ({} as JoinRequest));
-    const privacy = parsePrivacy(input.privacy);
-    const user = await joinChallenge(subredditId, userId, privacy);
+    const state = await joinChallenge(subredditId, userId, 'public');
 
     return c.json({
-      type: 'join',
-      userId,
-      user,
+      status: 'ok',
+      state,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return c.json<ErrorResponse>({ status: 'error', message }, 401);
-  }
-});
-
-api.post('/check-in', async (c) => {
-  try {
-    const subredditId = requireSubredditId();
-    const userId = requireUserId();
-
-    await ensureChallengeConfig(subredditId);
-
-    const day = utcDayNumber(new Date());
-    const existing = await getUserState(subredditId, userId);
-    if (!existing) {
-      return c.json<ErrorResponse>(
-        {
-          status: 'error',
-          message: 'You must join the challenge before checking in',
-        },
-        403
-      );
-    }
-
-    if (!canCheckIn(existing, day)) {
-      return c.json<ErrorResponse>(
-        {
-          status: 'error',
-          message: 'You already checked in for this UTC day',
-        },
-        409
-      );
-    }
-
-    const updated = await recordCheckIn(subredditId, userId, day);
-    if (!updated) {
-      return c.json<ErrorResponse>(
-        {
-          status: 'error',
-          message: 'Failed to persist check-in',
-        },
-        500
-      );
-    }
-
-    return c.json({
-      type: 'check-in',
-      userId,
-      user: updated,
-      utcDay: day,
-      previewNext: applyCheckIn(updated, day + 1),
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return c.json<ErrorResponse>({ status: 'error', message }, 401);
+    return jsonError(c, 401, 'JOIN_FAILED', message);
   }
 });
 
 api.post('/privacy', async (c) => {
   try {
-    const subredditId = requireSubredditId();
+    const { subredditId } = requireSubredditContext();
     const userId = requireUserId();
-    const input = await c.req.json<PrivacyRequest>();
 
-    const privacy = parsePrivacy(input.privacy);
-    const user = await setPrivacy(subredditId, userId, privacy);
-    if (!user) {
-      return c.json<ErrorResponse>(
-        {
-          status: 'error',
-          message: 'You must join before changing privacy settings',
-        },
-        404
+    const body = await c.req
+      .json<PrivacyRequest>()
+      .catch(() => ({} as PrivacyRequest));
+    const privacy = parsePrivacy(body.privacy);
+    if (!privacy) {
+      return jsonError(
+        c,
+        400,
+        'INVALID_PRIVACY',
+        'privacy must be either "public" or "private"'
+      );
+    }
+
+    const state = await setPrivacy(subredditId, userId, privacy);
+    if (!state) {
+      return jsonError(
+        c,
+        403,
+        'JOIN_REQUIRED',
+        'You must join before changing privacy settings'
       );
     }
 
     return c.json({
-      type: 'privacy',
-      userId,
-      user,
+      status: 'ok',
+      state,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return c.json<ErrorResponse>({ status: 'error', message }, 401);
+    return jsonError(c, 401, 'PRIVACY_UPDATE_FAILED', message);
+  }
+});
+
+api.post('/checkin', async (c) => {
+  try {
+    const { subredditId } = requireSubredditContext();
+    const userId = requireUserId();
+
+    await ensureChallengeConfig(subredditId);
+
+    const today = utcDayNumber(new Date());
+    const state = await getUserState(subredditId, userId);
+
+    if (!state) {
+      return jsonError(
+        c,
+        403,
+        'JOIN_REQUIRED',
+        'Join the challenge before checking in'
+      );
+    }
+
+    if (state.lastCheckinDayUTC === today) {
+      return jsonError(
+        c,
+        409,
+        'ALREADY_CHECKED_IN',
+        'You already checked in today (UTC). Come back after the daily reset.',
+        state
+      );
+    }
+
+    const savedState = await recordCheckIn(subredditId, userId, today);
+    if (!savedState) {
+      return jsonError(
+        c,
+        500,
+        'CHECKIN_SAVE_FAILED',
+        'Unable to save check-in state'
+      );
+    }
+
+    return c.json({
+      status: 'ok',
+      state: savedState,
+      checkedInToday: true,
+      nextResetUtcTimestamp: nextResetUtcTimestamp(new Date()),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return jsonError(c, 401, 'CHECKIN_FAILED', message);
+  }
+});
+
+api.get('/me', async (c) => {
+  try {
+    const { subredditId } = requireSubredditContext();
+    const userId = requireUserId();
+
+    const state = await getUserState(subredditId, userId);
+    const now = new Date();
+    const today = utcDayNumber(now);
+
+    return c.json({
+      status: 'ok',
+      state,
+      checkedInToday: checkedInToday(state, today),
+      nextResetUtcTimestamp: nextResetUtcTimestamp(now),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return jsonError(c, 401, 'ME_FAILED', message);
   }
 });
 
 api.get('/leaderboard', async (c) => {
   try {
-    const subredditId = requireSubredditId();
-    await ensureChallengeConfig(subredditId);
+    const { subredditId } = requireSubredditContext();
+    const rawLimit = c.req.query('limit');
+    const parsedLimit = rawLimit ? Number.parseInt(rawLimit, 10) : 25;
+    const limit =
+      Number.isNaN(parsedLimit) || parsedLimit <= 0
+        ? 25
+        : Math.min(parsedLimit, 100);
 
-    const leaderboard = await getLeaderboard(subredditId, 25);
+    const rows = await getLeaderboard(subredditId, limit);
+
+    const users = await Promise.all(
+      rows.map(async (row) => {
+        const user = await reddit.getUserById(row.userId as `t2_${string}`);
+        return {
+          userId: row.userId,
+          displayName: user?.displayName ?? user?.username,
+          currentStreak: row.currentStreak,
+          streakStartDayUTC: row.streakStartDayUTC,
+        };
+      })
+    );
 
     return c.json({
-      type: 'leaderboard',
-      subredditId,
-      leaderboard,
+      status: 'ok',
+      leaderboard: users,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
-    return c.json<ErrorResponse>({ status: 'error', message }, 400);
-  }
-});
-
-api.get('/init', async (c) => {
-  try {
-    const subredditId = requireSubredditId();
-    const challenge = await ensureChallengeConfig(subredditId);
-
-    const userId = context.userId;
-    const day = utcDayNumber(new Date());
-    const user = userId ? await getUserState(subredditId, userId) : null;
-
-    return c.json({
-      type: 'init',
-      challenge,
-      user,
-      utcDay: day,
-      canCheckIn: user ? canCheckIn(user, day) : false,
-      leaderboard: await getLeaderboard(subredditId, 25),
-      username: context.username ?? null,
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : 'Unknown error';
-    return c.json<ErrorResponse>({ status: 'error', message }, 400);
+    return jsonError(c, 400, 'LEADERBOARD_FAILED', message);
   }
 });
