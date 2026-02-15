@@ -1,6 +1,14 @@
 {
   "$schema": "https://developers.reddit.com/schema/config-file.v1.json",
   "name": "streak-engine",
+  "permissions": {
+    "redis": true,
+    "reddit": {
+      "enable": true,
+      "scope": "user",
+      "asUser": []
+    }
+  },
   "post": {
     "dir": "dist/client",
     "entrypoints": {
@@ -44,5 +52,8 @@
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build"
+  },
+  "dev": {
+    "subreddit": "streak_club_dev"
   }
 }
