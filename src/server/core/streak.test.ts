@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
+  applyDevDayOffset,
   applyCheckIn,
   canCheckIn,
+  computeNextResetFromDayNumber,
   computeNextResetUTC,
   utcDayNumber,
   type UserState,
@@ -88,5 +90,25 @@ describe('streak helpers', () => {
     const expected = new Date('2026-02-16T00:00:00.000Z').getTime();
 
     expect(computeNextResetUTC(now)).toBe(expected);
+  });
+
+  it('effective day offset allows multi-day playtest progression on same real day', () => {
+    const realDay = utcDayNumber(new Date('2026-02-15T10:00:00.000Z'));
+    const dayWithOffset0 = applyDevDayOffset(realDay, 0);
+    const dayWithOffset1 = applyDevDayOffset(realDay, 1);
+
+    const startState = makeUserState();
+    const afterFirst = applyCheckIn(startState, dayWithOffset0);
+    const afterSecond = applyCheckIn(afterFirst, dayWithOffset1);
+
+    expect(afterFirst.currentStreak).toBe(1);
+    expect(afterSecond.currentStreak).toBe(2);
+    expect(afterSecond.lastCheckinDayUTC).toBe(realDay + 1);
+  });
+
+  it('computeNextResetFromDayNumber returns reset for effective day', () => {
+    const effectiveDay = 20500;
+    const expected = (effectiveDay + 1) * 86_400_000;
+    expect(computeNextResetFromDayNumber(effectiveDay)).toBe(expected);
   });
 });

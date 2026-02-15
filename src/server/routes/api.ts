@@ -2,14 +2,18 @@ import { Hono } from 'hono';
 import type { Context as HonoContext } from 'hono';
 import { context, reddit } from '@devvit/web/server';
 import {
+  computeNextResetFromDayNumber,
   computeNextResetUTC,
   ensureChallengeConfig,
+  getDevDayOffset,
+  getTodayDayNumber,
   getChallengeStats,
   getLeaderboard,
   getUserState,
   joinChallenge,
   recordCheckIn,
   setChallengeConfig,
+  setDevDayOffset,
   setPrivacy,
   utcDayNumber,
   type Privacy,
@@ -30,6 +34,10 @@ type ConfigRequest = {
 
 type PrivacyRequest = {
   privacy?: Privacy;
+};
+
+type DevTimeRequest = {
+  devDayOffset?: number;
 };
 
 type HttpStatus = 400 | 401 | 403 | 404 | 409 | 500;
@@ -90,12 +98,27 @@ const isModerator = async (
   );
 };
 
+const requireModerator = async (
+  subredditName: string
+): Promise<{ username: string }> => {
+  const username = context.username;
+  if (!username) {
+    throw new Error('AUTH_REQUIRED');
+  }
+
+  if (!(await isModerator(subredditName, username))) {
+    throw new Error('MODERATOR_REQUIRED');
+  }
+
+  return { username };
+};
+
 export const api = new Hono();
 
 api.get('/config', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
-    const today = utcDayNumber(new Date());
+    const today = await getTodayDayNumber(subredditId);
     const config = await ensureChallengeConfig(subredditId);
     const stats = await getChallengeStats(subredditId, today);
 
@@ -113,24 +136,26 @@ api.get('/config', async (c) => {
 api.post('/config', async (c) => {
   try {
     const { subredditId, subredditName } = requireSubredditContext();
-    const username = context.username;
-
-    if (!username) {
-      return jsonError(
-        c,
-        401,
-        'AUTH_REQUIRED',
-        'You must be logged in to update challenge config'
-      );
-    }
-
-    if (!(await isModerator(subredditName, username))) {
-      return jsonError(
-        c,
-        403,
-        'MODERATOR_REQUIRED',
-        'Only moderators can update challenge config'
-      );
+    try {
+      await requireModerator(subredditName);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
+        return jsonError(
+          c,
+          401,
+          'AUTH_REQUIRED',
+          'You must be logged in to update challenge config'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can update challenge config'
+        );
+      }
+      throw error;
     }
 
     const body = await c.req
@@ -226,7 +251,7 @@ api.post('/checkin', async (c) => {
 
     await ensureChallengeConfig(subredditId);
 
-    const today = utcDayNumber(new Date());
+    const today = await getTodayDayNumber(subredditId);
     const state = await getUserState(subredditId, userId);
 
     if (!state) {
@@ -272,12 +297,17 @@ api.post('/checkin', async (c) => {
 
 api.get('/me', async (c) => {
   try {
-    const { subredditId } = requireSubredditContext();
+    const { subredditId, subredditName } = requireSubredditContext();
     const userId = requireUserId();
 
     const state = await getUserState(subredditId, userId);
     const now = new Date();
-    const today = utcDayNumber(now);
+    const today = await getTodayDayNumber(subredditId, now);
+    const username = context.username;
+    const moderator =
+      typeof username === 'string' && username.length > 0
+        ? await isModerator(subredditName, username)
+        : false;
 
     let myRank: number | null = null;
     if (state?.privacy === 'public') {
@@ -292,10 +322,91 @@ api.get('/me', async (c) => {
       checkedInToday: checkedInToday(state, today),
       nextResetUtcTimestamp: computeNextResetUTC(now),
       myRank,
+      isModerator: moderator,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return jsonError(c, 401, 'ME_FAILED', message);
+  }
+});
+
+api.get('/dev/time', async (c) => {
+  try {
+    const { subredditId } = requireSubredditContext();
+    const now = new Date();
+    const utcDayNumberNow = utcDayNumber(now);
+    const devDayOffset = await getDevDayOffset(subredditId);
+    const effectiveDayNumber = await getTodayDayNumber(subredditId, now);
+
+    return c.json({
+      status: 'ok',
+      note: 'DEV ONLY: Simulates day changes for testing.',
+      serverUtcNow: now.toISOString(),
+      utcDayNumberNow,
+      devDayOffset,
+      effectiveDayNumber,
+      nextResetUtcMs: computeNextResetFromDayNumber(effectiveDayNumber),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return jsonError(c, 400, 'DEV_TIME_READ_FAILED', message);
+  }
+});
+
+api.post('/dev/time', async (c) => {
+  try {
+    const { subredditId, subredditName } = requireSubredditContext();
+    try {
+      await requireModerator(subredditName);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
+        return jsonError(
+          c,
+          401,
+          'AUTH_REQUIRED',
+          'You must be logged in to update dev time settings'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can update dev time settings'
+        );
+      }
+      throw error;
+    }
+
+    const body = await c.req
+      .json<DevTimeRequest>()
+      .catch(() => ({} as DevTimeRequest));
+    if (typeof body.devDayOffset !== 'number' || !Number.isInteger(body.devDayOffset)) {
+      return jsonError(
+        c,
+        400,
+        'INVALID_DEV_DAY_OFFSET',
+        'devDayOffset must be an integer'
+      );
+    }
+
+    const devDayOffset = await setDevDayOffset(subredditId, body.devDayOffset);
+    const now = new Date();
+    const utcDayNumberNow = utcDayNumber(now);
+    const effectiveDayNumber = await getTodayDayNumber(subredditId, now);
+
+    return c.json({
+      status: 'ok',
+      note: 'DEV ONLY: Simulates day changes for testing.',
+      serverUtcNow: now.toISOString(),
+      utcDayNumberNow,
+      devDayOffset,
+      effectiveDayNumber,
+      nextResetUtcMs: computeNextResetFromDayNumber(effectiveDayNumber),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return jsonError(c, 400, 'DEV_TIME_WRITE_FAILED', message);
   }
 });
 

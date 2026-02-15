@@ -46,6 +46,7 @@ export const keys = {
     `user:${subredditId}:${userId}`,
   leaderboard: (subredditId: string): string => `lb:${subredditId}`,
   challengeStats: (subredditId: string): string => `stats:${subredditId}`,
+  devSettings: (subredditId: string): string => `dev:${subredditId}`,
 };
 
 const toDayStorage = (day: number | null): string =>
@@ -114,6 +115,41 @@ export const utcDayNumber = (date: Date): number =>
 
 export const computeNextResetUTC = (date: Date): number =>
   (utcDayNumber(date) + 1) * MILLISECONDS_PER_DAY;
+
+export const applyDevDayOffset = (dayNumber: number, devDayOffset: number): number =>
+  dayNumber + devDayOffset;
+
+export const computeNextResetFromDayNumber = (dayNumber: number): number =>
+  (dayNumber + 1) * MILLISECONDS_PER_DAY;
+
+export const getDevDayOffset = async (subredditId: string): Promise<number> => {
+  const offset = await redis.hGet(keys.devSettings(subredditId), 'devDayOffset');
+  if (!offset) {
+    return 0;
+  }
+
+  const parsed = Number.parseInt(offset, 10);
+  return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+export const setDevDayOffset = async (
+  subredditId: string,
+  devDayOffset: number
+): Promise<number> => {
+  await redis.hSet(keys.devSettings(subredditId), {
+    devDayOffset: String(devDayOffset),
+  });
+  return devDayOffset;
+};
+
+export const getTodayDayNumber = async (
+  subredditId: string,
+  now: Date = new Date()
+): Promise<number> => {
+  const baseDayNumber = utcDayNumber(now);
+  const devDayOffset = await getDevDayOffset(subredditId);
+  return applyDevDayOffset(baseDayNumber, devDayOffset);
+};
 
 export const canCheckIn = (userState: UserState, day: number): boolean => {
   const lastCheckinDay = userState.lastCheckinDayUTC;

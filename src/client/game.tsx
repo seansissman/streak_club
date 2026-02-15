@@ -36,6 +36,7 @@ type MeResponse = {
   checkedInToday: boolean;
   nextResetUtcTimestamp: number;
   myRank: number | null;
+  isModerator: boolean;
 };
 
 type LeaderboardResponse = {
@@ -53,6 +54,16 @@ type ApiError = {
   code: string;
   message: string;
   state?: UserState | null;
+};
+
+type DevTimeResponse = {
+  status: 'ok';
+  note: string;
+  serverUtcNow: string;
+  utcDayNumberNow: number;
+  devDayOffset: number;
+  effectiveDayNumber: number;
+  nextResetUtcMs: number;
 };
 
 const MILLIS_PER_DAY = 86_400_000;
@@ -104,12 +115,14 @@ const App = () => {
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState('00:00:00');
+  const [devTime, setDevTime] = useState<DevTimeResponse | null>(null);
 
   const loadAll = useCallback(async () => {
-    const [configRes, meRes, leaderboardRes] = await Promise.all([
+    const [configRes, meRes, leaderboardRes, devTimeRes] = await Promise.all([
       apiRequest<ConfigResponse>('/api/config'),
       apiRequest<MeResponse>('/api/me'),
       apiRequest<LeaderboardResponse>('/api/leaderboard?limit=10'),
+      apiRequest<DevTimeResponse>('/api/dev/time').catch(() => null),
     ]);
 
     setConfig(configRes.config);
@@ -117,6 +130,7 @@ const App = () => {
     setCheckedInTodayCount(configRes.stats.checkedInTodayCount);
     setMe(meRes);
     setLeaderboard(leaderboardRes.leaderboard);
+    setDevTime(devTimeRes);
   }, []);
 
   useEffect(() => {
@@ -221,6 +235,28 @@ const App = () => {
       }
     },
     [me?.state, refreshAfterAction]
+  );
+
+  const onAdjustDevDayOffset = useCallback(
+    async (nextOffset: number) => {
+      try {
+        setActionLoading(true);
+        setError(null);
+        await apiRequest<DevTimeResponse>('/api/dev/time', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ devDayOffset: nextOffset }),
+        });
+        await refreshAfterAction();
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to update dev day offset';
+        setError(message);
+      } finally {
+        setActionLoading(false);
+      }
+    },
+    [refreshAfterAction]
   );
 
   if (loading) {
@@ -368,6 +404,58 @@ const App = () => {
             </ol>
           )}
         </section>
+
+        {me?.isModerator && devTime && (
+          <section className="bg-white rounded-xl p-5 border border-amber-200 space-y-3">
+            <h2 className="text-lg font-semibold">Dev Time Panel</h2>
+            <p className="text-sm text-amber-700">
+              DEV ONLY: Simulates day changes for testing.
+            </p>
+            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
+                <div className="text-slate-500">UTC day now</div>
+                <div className="text-lg font-semibold">{devTime.utcDayNumberNow}</div>
+              </div>
+              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
+                <div className="text-slate-500">Offset</div>
+                <div className="text-lg font-semibold">{devTime.devDayOffset}</div>
+              </div>
+              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
+                <div className="text-slate-500">Effective day</div>
+                <div className="text-lg font-semibold">
+                  {devTime.effectiveDayNumber}
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2">
+              <button
+                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                onClick={() =>
+                  onAdjustDevDayOffset((devTime?.devDayOffset ?? 0) - 1)
+                }
+                disabled={actionLoading}
+              >
+                -1 day
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                onClick={() =>
+                  onAdjustDevDayOffset((devTime?.devDayOffset ?? 0) + 1)
+                }
+                disabled={actionLoading}
+              >
+                +1 day
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                onClick={() => onAdjustDevDayOffset(0)}
+                disabled={actionLoading}
+              >
+                Reset to 0
+              </button>
+            </div>
+          </section>
+        )}
 
         {error && (
           <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">

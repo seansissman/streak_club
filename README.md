@@ -75,6 +75,18 @@ npm run check:name
 
 If the app rename is intentional, update both `devvit.json` `"name"` and `.devvit-app-name` in the same change.
 
+## DEV-only time offset endpoints
+
+For playtest-only multi-day simulation, the server exposes:
+
+- `GET /api/dev/time`
+  - Returns `{ serverUtcNow, utcDayNumberNow, devDayOffset, effectiveDayNumber, nextResetUtcMs }`
+- `POST /api/dev/time` (moderator only)
+  - Body: `{ "devDayOffset": <integer> }`
+  - Updates the per-subreddit DEV offset used to compute effective day numbers.
+
+These endpoints are **DEV ONLY** tooling for testing and are labeled as such in the UI.
+
 ## If upload starts creating new apps again
 
 1. Verify the linked app name in `devvit.json`:
