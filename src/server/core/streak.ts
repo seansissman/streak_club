@@ -35,11 +35,17 @@ export type LeaderboardEntry = {
   lastCheckinDayUTC: number | null;
 };
 
+export type ChallengeStats = {
+  participantsCount: number;
+  checkedInTodayCount: number;
+};
+
 export const keys = {
   challengeConfig: (subredditId: string): string => `cfg:${subredditId}`,
   userState: (subredditId: string, userId: string): string =>
     `user:${subredditId}:${userId}`,
   leaderboard: (subredditId: string): string => `lb:${subredditId}`,
+  challengeStats: (subredditId: string): string => `stats:${subredditId}`,
 };
 
 const toDayStorage = (day: number | null): string =>
@@ -253,6 +259,7 @@ export const joinChallenge = async (
 
   await setUserState(subredditId, userId, initialState);
   await syncLeaderboardEntry(subredditId, userId, initialState);
+  await redis.hIncrBy(keys.challengeStats(subredditId), 'participantsCount', 1);
 
   return initialState;
 };
@@ -291,8 +298,28 @@ export const recordCheckIn = async (
   const updated = applyCheckIn(existing, day);
   await setUserState(subredditId, userId, updated);
   await syncLeaderboardEntry(subredditId, userId, updated);
+  await redis.hIncrBy(
+    keys.challengeStats(subredditId),
+    `checkins:${String(day)}`,
+    1
+  );
 
   return updated;
+};
+
+export const getChallengeStats = async (
+  subredditId: string,
+  day: number
+): Promise<ChallengeStats> => {
+  const stats = await redis.hMGet(keys.challengeStats(subredditId), [
+    'participantsCount',
+    `checkins:${String(day)}`,
+  ]);
+
+  return {
+    participantsCount: Number.parseInt(stats[0] ?? '0', 10) || 0,
+    checkedInTodayCount: Number.parseInt(stats[1] ?? '0', 10) || 0,
+  };
 };
 
 export const getLeaderboard = async (

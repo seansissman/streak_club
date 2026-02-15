@@ -3,6 +3,7 @@ import type { Context as HonoContext } from 'hono';
 import { context, reddit } from '@devvit/web/server';
 import {
   ensureChallengeConfig,
+  getChallengeStats,
   getLeaderboard,
   getUserState,
   joinChallenge,
@@ -99,11 +100,14 @@ export const api = new Hono();
 api.get('/config', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
+    const today = utcDayNumber(new Date());
     const config = await ensureChallengeConfig(subredditId);
+    const stats = await getChallengeStats(subredditId, today);
 
     return c.json({
       status: 'ok',
       config,
+      stats,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -280,11 +284,19 @@ api.get('/me', async (c) => {
     const now = new Date();
     const today = utcDayNumber(now);
 
+    let myRank: number | null = null;
+    if (state?.privacy === 'public') {
+      const ranking = await getLeaderboard(subredditId, 1000);
+      const rankIndex = ranking.findIndex((entry) => entry.userId === userId);
+      myRank = rankIndex >= 0 ? rankIndex + 1 : null;
+    }
+
     return c.json({
       status: 'ok',
       state,
       checkedInToday: checkedInToday(state, today),
       nextResetUtcTimestamp: nextResetUtcTimestamp(now),
+      myRank,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
