@@ -51,3 +51,37 @@ Daily reset is at **00:00 UTC**.
 npm run devvit:upload
 npm run devvit:playtest
 ```
+
+## App linkage
+
+This repo is linked to a Devvit app via `devvit.json`, specifically the `"name"` field.
+
+- Current linked app: `"name": "streak-club"`
+- This file is safe to commit and should be versioned to keep uploads stable across machines/sessions.
+- Devvit auth/session tokens are stored outside the repo under `~/.devvit/` and should never be committed.
+
+## If upload starts creating new apps again
+
+1. Verify the linked app name in `devvit.json`:
+
+```bash
+cat devvit.json
+```
+
+2. Confirm what app this directory resolves to:
+
+```bash
+devvit view
+```
+
+3. List existing apps to confirm the exact target name:
+
+```bash
+devvit list apps
+```
+
+4. Re-run upload after fixing the `devvit.json` `"name"` value:
+
+```bash
+devvit upload
+```
