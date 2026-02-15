@@ -130,6 +130,24 @@ Use the in-app **Dev Time Panel** (moderator-only) to set `devDayOffset`:
 
 Warning shown in UI/API: **DEV ONLY: Simulates day changes for testing.**
 
+### Playtest smoke checklist
+
+Latest run (WSL CLI): `devvit playtest` launched successfully and produced:
+
+- URL: `https://www.reddit.com/r/streak_club_dev/?playtest=streak-club`
+- Status: Playtest ready
+
+Feature checklist to run in browser:
+
+- [ ] New user: Join works
+- [ ] Check-in works and shows checked-in state
+- [ ] Privacy toggle hides user on leaderboard when private
+- [ ] Privacy toggle shows user on leaderboard when public
+- [ ] Leaderboard loads
+- [ ] Dev day offset panel works (`-1`, `+1`, `reset`)
+
+Note: from WSL shell we can validate build/upload/playtest launch, but the account-scoped UI interactions above must be confirmed in-browser.
+
 ## If upload starts creating new apps again
 
 1. Verify the linked app name in `devvit.json`:
