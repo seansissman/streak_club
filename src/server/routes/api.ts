@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Context as HonoContext } from 'hono';
 import { context, reddit } from '@devvit/web/server';
 import {
+  computeNextResetUTC,
   ensureChallengeConfig,
   getChallengeStats,
   getLeaderboard,
@@ -31,7 +32,6 @@ type PrivacyRequest = {
   privacy?: Privacy;
 };
 
-const MILLISECONDS_PER_DAY = 86_400_000;
 type HttpStatus = 400 | 401 | 403 | 404 | 409 | 500;
 
 const jsonError = (
@@ -67,11 +67,6 @@ const parsePrivacy = (value: unknown): Privacy | null => {
   }
 
   return null;
-};
-
-const nextResetUtcTimestamp = (now: Date): number => {
-  const day = utcDayNumber(now);
-  return (day + 1) * MILLISECONDS_PER_DAY;
 };
 
 const checkedInToday = (state: UserState | null, day: number): boolean =>
@@ -267,7 +262,7 @@ api.post('/checkin', async (c) => {
       status: 'ok',
       state: savedState,
       checkedInToday: true,
-      nextResetUtcTimestamp: nextResetUtcTimestamp(new Date()),
+      nextResetUtcTimestamp: computeNextResetUTC(new Date()),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -295,7 +290,7 @@ api.get('/me', async (c) => {
       status: 'ok',
       state,
       checkedInToday: checkedInToday(state, today),
-      nextResetUtcTimestamp: nextResetUtcTimestamp(now),
+      nextResetUtcTimestamp: computeNextResetUTC(now),
       myRank,
     });
   } catch (error) {

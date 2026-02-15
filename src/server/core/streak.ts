@@ -112,6 +112,9 @@ const deserializeUserState = (
 export const utcDayNumber = (date: Date): number =>
   Math.floor(date.getTime() / MILLISECONDS_PER_DAY);
 
+export const computeNextResetUTC = (date: Date): number =>
+  (utcDayNumber(date) + 1) * MILLISECONDS_PER_DAY;
+
 export const canCheckIn = (userState: UserState, day: number): boolean => {
   const lastCheckinDay = userState.lastCheckinDayUTC;
   if (lastCheckinDay === null) {
