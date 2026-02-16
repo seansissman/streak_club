@@ -5,15 +5,29 @@ import { createRoot } from 'react-dom/client';
 import { isCheckedInToday, isUserJoined, shouldRenderCheckInButton } from './state';
 
 type Privacy = 'public' | 'private';
+type TemplateId =
+  | 'custom'
+  | 'habit_30'
+  | 'coding_daily'
+  | 'fitness_daily'
+  | 'study_daily';
 
 type ChallengeConfig = {
-  templateId: 'custom' | 'habit_30' | 'coding_daily' | 'fitness_daily' | 'study_daily';
+  templateId: TemplateId;
   title: string;
   description: string;
   timezone: 'UTC';
   badgeThresholds: number[];
   updatedAt: number;
   createdAt: number;
+};
+
+type ChallengeTemplate = {
+  id: TemplateId;
+  label: string;
+  title: string;
+  description: string;
+  badgeThresholds: number[];
 };
 
 type UserState = {
@@ -52,6 +66,11 @@ type LeaderboardResponse = {
     currentStreak: number;
     streakStartDayUTC: number | null;
   }>;
+};
+
+type TemplatesResponse = {
+  status: 'ok';
+  templates: ChallengeTemplate[];
 };
 
 type ApiError = {
@@ -94,6 +113,11 @@ type CheckInResponse = {
   nextResetUtcTimestamp: number;
 };
 
+type SaveConfigResponse = {
+  status: 'ok';
+  config: ChallengeConfig;
+};
+
 const MILLIS_PER_DAY = 86_400_000;
 
 const formatUtcDay = (day: number | null): string => {
@@ -116,6 +140,19 @@ const formatCountdown = (target: number): string => {
   const seconds = (totalSeconds % 60).toString().padStart(2, '0');
 
   return `${hours}:${minutes}:${seconds}`;
+};
+
+const parseBadgeThresholdInput = (value: string): number[] | null => {
+  const values = value
+    .split(',')
+    .map((part) => Number.parseInt(part.trim(), 10))
+    .filter((num) => Number.isInteger(num) && num > 0);
+
+  if (values.length === 0) {
+    return null;
+  }
+
+  return Array.from(new Set(values)).sort((a, b) => a - b);
 };
 
 const apiRequest = async <T,>(
@@ -144,32 +181,52 @@ const App = () => {
   const [config, setConfig] = useState<ChallengeConfig | null>(null);
   const [participantsCount, setParticipantsCount] = useState(0);
   const [checkedInTodayCount, setCheckedInTodayCount] = useState(0);
+  const [templates, setTemplates] = useState<ChallengeTemplate[]>([]);
   const [me, setMe] = useState<MeResponse | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardResponse['leaderboard']>([]);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [devNotice, setDevNotice] = useState<string | null>(null);
+  const [configNotice, setConfigNotice] = useState<string | null>(null);
+  const [configError, setConfigError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState('00:00:00');
   const [devTime, setDevTime] = useState<DevTimeResponse | null>(null);
   const [resetConfirmArmed, setResetConfirmArmed] = useState(false);
+  const [configTemplateId, setConfigTemplateId] = useState<TemplateId>('custom');
+  const [configTitle, setConfigTitle] = useState('');
+  const [configDescription, setConfigDescription] = useState('');
+  const [configBadgeThresholdsInput, setConfigBadgeThresholdsInput] = useState('');
 
   const loadAll = useCallback(async () => {
     const reqTs = Date.now();
-    const [configRes, meRes, leaderboardRes, devTimeRes] = await Promise.all([
+    const [configRes, templatesRes, meRes, leaderboardRes, devTimeRes] = await Promise.all([
       apiRequest<ConfigResponse>(`/api/config?ts=${reqTs}`),
+      apiRequest<TemplatesResponse>(`/api/templates?ts=${reqTs}`),
       apiRequest<MeResponse>(`/api/me?ts=${reqTs}`),
       apiRequest<LeaderboardResponse>(`/api/leaderboard?limit=10&ts=${reqTs}`),
       apiRequest<DevTimeResponse>(`/api/dev/time?ts=${reqTs}`).catch(() => null),
     ]);
 
     setConfig(configRes.config);
+    setTemplates(templatesRes.templates);
     setParticipantsCount(configRes.stats.participantsCount);
     setCheckedInTodayCount(configRes.stats.checkedInTodayCount);
     setMe(meRes);
     setLeaderboard(leaderboardRes.leaderboard);
     setDevTime(devTimeRes);
   }, []);
+
+  useEffect(() => {
+    if (!config) {
+      return;
+    }
+
+    setConfigTemplateId(config.templateId);
+    setConfigTitle(config.title);
+    setConfigDescription(config.description);
+    setConfigBadgeThresholdsInput(config.badgeThresholds.join(', '));
+  }, [config]);
 
   useEffect(() => {
     const run = async () => {
@@ -354,6 +411,65 @@ const App = () => {
     }
   }, [refreshAfterAction, resetConfirmArmed]);
 
+  const onLoadTemplateDefaults = useCallback(() => {
+    const selected = templates.find((template) => template.id === configTemplateId);
+    if (!selected) {
+      setConfigError('Template defaults could not be loaded.');
+      return;
+    }
+
+    setConfigError(null);
+    setConfigNotice(`Loaded defaults from "${selected.label}".`);
+    setConfigTitle(selected.title);
+    setConfigDescription(selected.description);
+    setConfigBadgeThresholdsInput(selected.badgeThresholds.join(', '));
+  }, [configTemplateId, templates]);
+
+  const onSaveConfig = useCallback(async () => {
+    const title = configTitle.trim();
+    const description = configDescription.trim();
+    const badgeThresholds = parseBadgeThresholdInput(configBadgeThresholdsInput);
+
+    if (!title || !description) {
+      setConfigError('Title and description are required.');
+      return;
+    }
+    if (!badgeThresholds) {
+      setConfigError('Badge thresholds must be positive integers, e.g. 3, 7, 14, 30.');
+      return;
+    }
+
+    try {
+      setActionLoading(true);
+      setConfigError(null);
+      setConfigNotice(null);
+      const result = await apiRequest<SaveConfigResponse>('/api/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          templateId: configTemplateId,
+          title,
+          description,
+          badgeThresholds,
+        }),
+      });
+      setConfig(result.config);
+      setConfigNotice('Configuration saved.');
+      await refreshAfterAction();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to save config';
+      setConfigError(message);
+    } finally {
+      setActionLoading(false);
+    }
+  }, [
+    configBadgeThresholdsInput,
+    configDescription,
+    configTemplateId,
+    configTitle,
+    refreshAfterAction,
+  ]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-100 text-slate-900 p-6">
@@ -506,6 +622,95 @@ const App = () => {
             </ol>
           )}
         </section>
+
+        {me?.isModerator && (
+          <section className="bg-white rounded-xl p-5 border border-indigo-200 space-y-3">
+            <h2 className="text-lg font-semibold">Challenge Config (Moderator)</h2>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+              <label className="text-sm">
+                <span className="block mb-1 text-slate-600">Template</span>
+                <select
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                  value={configTemplateId}
+                  onChange={(event) =>
+                    setConfigTemplateId(event.target.value as TemplateId)
+                  }
+                  disabled={actionLoading}
+                >
+                  {templates.map((template) => (
+                    <option key={template.id} value={template.id}>
+                      {template.label}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <div className="flex items-end">
+                <button
+                  className="w-full sm:w-auto px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                  onClick={onLoadTemplateDefaults}
+                  disabled={actionLoading || templates.length === 0}
+                >
+                  Load template
+                </button>
+              </div>
+            </div>
+
+            <label className="text-sm block">
+              <span className="block mb-1 text-slate-600">Title</span>
+              <input
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                value={configTitle}
+                onChange={(event) => setConfigTitle(event.target.value)}
+                disabled={actionLoading}
+              />
+            </label>
+
+            <label className="text-sm block">
+              <span className="block mb-1 text-slate-600">Description</span>
+              <textarea
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 min-h-24"
+                value={configDescription}
+                onChange={(event) => setConfigDescription(event.target.value)}
+                disabled={actionLoading}
+              />
+            </label>
+
+            <label className="text-sm block">
+              <span className="block mb-1 text-slate-600">
+                Badge thresholds (comma-separated)
+              </span>
+              <input
+                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                value={configBadgeThresholdsInput}
+                onChange={(event) => setConfigBadgeThresholdsInput(event.target.value)}
+                placeholder="3, 7, 14, 30"
+                disabled={actionLoading}
+              />
+            </label>
+
+            <div className="flex items-center gap-2">
+              <button
+                className="px-4 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium disabled:opacity-60"
+                onClick={onSaveConfig}
+                disabled={actionLoading}
+              >
+                Save
+              </button>
+              <span className="text-xs text-slate-500">Timezone is fixed to UTC.</span>
+            </div>
+
+            {configNotice && (
+              <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
+                {configNotice}
+              </p>
+            )}
+            {configError && (
+              <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+                {configError}
+              </p>
+            )}
+          </section>
+        )}
 
         {me?.isModerator && devTime && (
           <section className="bg-white rounded-xl p-5 border border-amber-200 space-y-3">
