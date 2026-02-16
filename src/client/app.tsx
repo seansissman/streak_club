@@ -18,6 +18,7 @@ type ChallengeConfig = {
   description: string;
   timezone: 'UTC';
   badgeThresholds: number[];
+  activePostId: string | null;
   updatedAt: number;
   createdAt: number;
 };
@@ -681,6 +682,19 @@ const App = () => {
         {me?.isModerator && (
           <section className="bg-white rounded-xl p-5 border border-indigo-200 space-y-3">
             <h2 className="text-lg font-semibold">Challenge Config (Moderator)</h2>
+            {config?.activePostId && (
+              <p className="text-sm text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
+                A streak tracker already exists. Open the existing tracker instead:{' '}
+                <a
+                  className="underline font-medium"
+                  href={`https://reddit.com/comments/${config.activePostId}`}
+                  target="_blank"
+                  rel="noreferrer"
+                >
+                  {config.activePostId}
+                </a>
+              </p>
+            )}
             {configNeedsSetup && (
               <p className="text-sm text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
                 First-time setup: pick a template, adjust fields, and save before

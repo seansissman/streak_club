@@ -2,7 +2,7 @@ import { Hono } from 'hono';
 import type { OnAppInstallRequest, TriggerResponse } from '@devvit/web/shared';
 import { context } from '@devvit/web/server';
 import { createPost } from '../core/post';
-import { ensureChallengeConfig } from '../core/streak';
+import { ensureChallengeConfig, setActiveTrackerPostId } from '../core/streak';
 
 export const triggers = new Hono();
 
@@ -10,6 +10,7 @@ triggers.post('/on-app-install', async (c) => {
   try {
     const config = await ensureChallengeConfig(context.subredditId);
     const post = await createPost(config.title);
+    await setActiveTrackerPostId(context.subredditId, post.id);
     const input = await c.req.json<OnAppInstallRequest>();
 
     return c.json<TriggerResponse>(

@@ -58,6 +58,8 @@ Daily reset is at **00:00 UTC**.
 
 After initial setup, config remains editable and future post creation uses the latest saved title.
 
+Guardrail: only one active tracker post is allowed per subreddit. If a tracker already exists, the app will direct moderators to the existing post instead of creating another.
+
 ## Quick Command Reference
 
 ```bash

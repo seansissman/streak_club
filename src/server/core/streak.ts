@@ -18,6 +18,7 @@ export type ChallengeConfig = {
   description: string;
   timezone: 'UTC';
   badgeThresholds: number[];
+  activePostId: string | null;
   updatedAt: number;
   createdAt: number;
 };
@@ -27,6 +28,7 @@ export type ChallengeConfigUpdate = {
   title?: string;
   description?: string;
   badgeThresholds?: number[];
+  activePostId?: string | null;
 };
 
 export type UserState = {
@@ -265,6 +267,7 @@ const serializeChallengeConfig = (
   description: config.description,
   timezone: config.timezone,
   badgeThresholds: JSON.stringify(config.badgeThresholds),
+  activePostId: config.activePostId ?? '',
   updatedAt: String(config.updatedAt),
   createdAt: String(config.createdAt),
 });
@@ -274,6 +277,7 @@ const defaultChallengeConfig = (now: number = Date.now()): ChallengeConfig => {
   return {
     ...templateConfig,
     timezone: UTC_TIMEZONE,
+    activePostId: null,
     updatedAt: now,
     createdAt: now,
   };
@@ -314,6 +318,7 @@ const deserializeChallengeConfig = (
     description: data.description ?? templateConfig.description,
     timezone: UTC_TIMEZONE,
     badgeThresholds: parsedThresholds ?? templateConfig.badgeThresholds,
+    activePostId: isBlank(data.activePostId) ? null : data.activePostId,
     updatedAt,
     createdAt,
   };
@@ -368,6 +373,8 @@ export const setChallengeConfig = async (
       (templateChanged ? templateDefaults.description : existing.description),
     timezone: UTC_TIMEZONE,
     badgeThresholds: nextBadgeThresholds,
+    activePostId:
+      update.activePostId !== undefined ? update.activePostId : existing.activePostId,
     updatedAt: Date.now(),
     createdAt: existing.createdAt,
   };
@@ -379,6 +386,14 @@ export const setChallengeConfig = async (
 
   return next;
 };
+
+export const setActiveTrackerPostId = async (
+  subredditId: string,
+  postId: string | null
+): Promise<ChallengeConfig> =>
+  setChallengeConfig(subredditId, {
+    activePostId: postId,
+  });
 
 export const getUserState = async (
   subredditId: string,
