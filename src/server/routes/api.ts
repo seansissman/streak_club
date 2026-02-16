@@ -20,6 +20,7 @@ import {
   type Privacy,
   type UserState,
 } from '../core/streak';
+import { isTemplateId, type TemplateId } from '../core/templates';
 
 type ErrorResponse = {
   status: 'error';
@@ -29,8 +30,10 @@ type ErrorResponse = {
 };
 
 type ConfigRequest = {
+  templateId?: string;
   title?: string;
   description?: string;
+  badgeThresholds?: number[];
 };
 
 type PrivacyRequest = {
@@ -170,21 +173,42 @@ api.post('/config', async (c) => {
     const body = await c.req
       .json<ConfigRequest>()
       .catch(() => ({} as ConfigRequest));
+    let templateId: TemplateId | undefined;
+    if (body.templateId !== undefined) {
+      if (!isTemplateId(body.templateId)) {
+        return jsonError(
+          c,
+          400,
+          'INVALID_TEMPLATE_ID',
+          'templateId must be one of: custom, habit_30, coding_daily, fitness_daily, study_daily'
+        );
+      }
+      templateId = body.templateId;
+    }
+
     const title = body.title?.trim();
     const description = body.description?.trim();
+    const badgeThresholds = body.badgeThresholds;
 
-    if (!title || !description) {
+    if (
+      templateId === undefined &&
+      title === undefined &&
+      description === undefined &&
+      badgeThresholds === undefined
+    ) {
       return jsonError(
         c,
         400,
         'INVALID_CONFIG',
-        'title and description are required'
+        'provide at least one of templateId, title, description, or badgeThresholds'
       );
     }
 
     const config = await setChallengeConfig(subredditId, {
+      templateId,
       title,
       description,
+      badgeThresholds,
     });
 
     return c.json({

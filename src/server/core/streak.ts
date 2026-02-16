@@ -1,4 +1,9 @@
 import { redis } from '@devvit/web/server';
+import {
+  applyTemplateToConfig,
+  isTemplateId,
+  type TemplateId,
+} from './templates';
 
 const MILLISECONDS_PER_DAY = 86_400_000;
 const UTC_TIMEZONE = 'UTC';
@@ -8,15 +13,20 @@ const STATE_GENERATION_FIELD = 'stateGeneration';
 export type Privacy = 'public' | 'private';
 
 export type ChallengeConfig = {
+  templateId: TemplateId;
   title: string;
   description: string;
   timezone: 'UTC';
-  createdAt: string;
+  badgeThresholds: number[];
+  updatedAt: number;
+  createdAt: number;
 };
 
 export type ChallengeConfigUpdate = {
-  title: string;
-  description: string;
+  templateId?: TemplateId;
+  title?: string;
+  description?: string;
+  badgeThresholds?: number[];
 };
 
 export type UserState = {
@@ -83,6 +93,48 @@ const parseNonNegativeInt = (
   }
 
   return parsed;
+};
+
+const parseTimestamp = (value: string | undefined, fallback: number): number => {
+  if (!value) {
+    return fallback;
+  }
+
+  const intParsed = Number.parseInt(value, 10);
+  if (!Number.isNaN(intParsed) && intParsed > 0) {
+    return intParsed;
+  }
+
+  const dateParsed = Date.parse(value);
+  return Number.isNaN(dateParsed) || dateParsed <= 0 ? fallback : dateParsed;
+};
+
+const sanitizeBadgeThresholds = (value: unknown): number[] | null => {
+  if (!Array.isArray(value)) {
+    return null;
+  }
+
+  const values = value
+    .map((item) => (typeof item === 'number' ? item : Number.parseInt(String(item), 10)))
+    .filter((num) => Number.isInteger(num) && num > 0);
+
+  if (values.length === 0) {
+    return null;
+  }
+
+  return Array.from(new Set(values)).sort((a, b) => a - b);
+};
+
+const parseBadgeThresholds = (raw: string | undefined): number[] | null => {
+  if (!raw) {
+    return null;
+  }
+
+  try {
+    return sanitizeBadgeThresholds(JSON.parse(raw));
+  } catch {
+    return sanitizeBadgeThresholds(raw.split(','));
+  }
 };
 
 const serializeUserState = (
@@ -205,37 +257,75 @@ export const applyCheckIn = (userState: UserState, day: number): UserState => {
   };
 };
 
-const defaultChallengeConfig = (): ChallengeConfig => ({
-  title: 'Streak Engine',
-  description: 'Join and check in daily. Reset time is 00:00 UTC.',
-  timezone: UTC_TIMEZONE,
-  createdAt: new Date().toISOString(),
+const serializeChallengeConfig = (
+  config: ChallengeConfig
+): Record<string, string> => ({
+  templateId: config.templateId,
+  title: config.title,
+  description: config.description,
+  timezone: config.timezone,
+  badgeThresholds: JSON.stringify(config.badgeThresholds),
+  updatedAt: String(config.updatedAt),
+  createdAt: String(config.createdAt),
 });
+
+const defaultChallengeConfig = (now: number = Date.now()): ChallengeConfig => {
+  const templateConfig = applyTemplateToConfig('custom');
+  return {
+    ...templateConfig,
+    timezone: UTC_TIMEZONE,
+    updatedAt: now,
+    createdAt: now,
+  };
+};
+
+const deserializeChallengeConfig = (
+  data: Record<string, string>,
+  fallbackNow: number
+): ChallengeConfig | null => {
+  if (Object.keys(data).length === 0) {
+    return null;
+  }
+
+  const templateId: TemplateId = isTemplateId(data.templateId)
+    ? data.templateId
+    : 'custom';
+  const templateConfig = applyTemplateToConfig(templateId);
+  const parsedThresholds = parseBadgeThresholds(data.badgeThresholds);
+  const createdAt = parseTimestamp(data.createdAt, fallbackNow);
+  const updatedAt = parseTimestamp(data.updatedAt, createdAt);
+
+  return {
+    templateId,
+    title: data.title ?? templateConfig.title,
+    description: data.description ?? templateConfig.description,
+    timezone: UTC_TIMEZONE,
+    badgeThresholds: parsedThresholds ?? templateConfig.badgeThresholds,
+    updatedAt,
+    createdAt,
+  };
+};
+
+export const applyTemplateToChallengeConfig = (
+  templateId: TemplateId,
+  overrides?: Partial<Pick<ChallengeConfig, 'title' | 'description' | 'badgeThresholds'>>
+): Pick<ChallengeConfig, 'templateId' | 'title' | 'description' | 'badgeThresholds'> =>
+  applyTemplateToConfig(templateId, overrides);
 
 export const ensureChallengeConfig = async (
   subredditId: string
 ): Promise<ChallengeConfig> => {
   const key = keys.challengeConfig(subredditId);
   const existing = await redis.hGetAll(key);
-
-  if (Object.keys(existing).length > 0) {
-    return {
-      title: existing.title ?? 'Streak Engine',
-      description:
-        existing.description ?? 'Join and check in daily. Reset time is 00:00 UTC.',
-      timezone: UTC_TIMEZONE,
-      createdAt: existing.createdAt ?? new Date(0).toISOString(),
-    };
+  const now = Date.now();
+  const parsed = deserializeChallengeConfig(existing, now);
+  if (parsed) {
+    await redis.hSet(key, serializeChallengeConfig(parsed));
+    return parsed;
   }
 
-  const config = defaultChallengeConfig();
-  await redis.hSet(key, {
-    title: config.title,
-    description: config.description,
-    timezone: config.timezone,
-    createdAt: config.createdAt,
-  });
-
+  const config = defaultChallengeConfig(now);
+  await redis.hSet(key, serializeChallengeConfig(config));
   return config;
 };
 
@@ -248,19 +338,31 @@ export const setChallengeConfig = async (
   update: ChallengeConfigUpdate
 ): Promise<ChallengeConfig> => {
   const existing = await ensureChallengeConfig(subredditId);
+  const nextTemplateId = update.templateId ?? existing.templateId;
+  const templateChanged = nextTemplateId !== existing.templateId;
+  const templateDefaults = applyTemplateToConfig(nextTemplateId);
+  const nextBadgeThresholds =
+    sanitizeBadgeThresholds(update.badgeThresholds) ??
+    (templateChanged ? templateDefaults.badgeThresholds : existing.badgeThresholds);
+
   const next: ChallengeConfig = {
-    ...existing,
-    title: update.title,
-    description: update.description,
+    templateId: nextTemplateId,
+    title:
+      update.title ??
+      (templateChanged ? templateDefaults.title : existing.title),
+    description:
+      update.description ??
+      (templateChanged ? templateDefaults.description : existing.description),
     timezone: UTC_TIMEZONE,
+    badgeThresholds: nextBadgeThresholds,
+    updatedAt: Date.now(),
+    createdAt: existing.createdAt,
   };
 
-  await redis.hSet(keys.challengeConfig(subredditId), {
-    title: next.title,
-    description: next.description,
-    timezone: next.timezone,
-    createdAt: next.createdAt,
-  });
+  await redis.hSet(
+    keys.challengeConfig(subredditId),
+    serializeChallengeConfig(next)
+  );
 
   return next;
 };

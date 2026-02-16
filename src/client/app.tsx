@@ -7,10 +7,13 @@ import { isCheckedInToday, isUserJoined, shouldRenderCheckInButton } from './sta
 type Privacy = 'public' | 'private';
 
 type ChallengeConfig = {
+  templateId: 'custom' | 'habit_30' | 'coding_daily' | 'fitness_daily' | 'study_daily';
   title: string;
   description: string;
   timezone: 'UTC';
-  createdAt: string;
+  badgeThresholds: number[];
+  updatedAt: number;
+  createdAt: number;
 };
 
 type UserState = {
