@@ -57,6 +57,18 @@ type ApiError = {
   state?: UserState | null;
 };
 
+class ApiRequestError extends Error {
+  readonly code?: string;
+  readonly state?: UserState | null;
+
+  constructor(message: string, apiError?: ApiError) {
+    super(message);
+    this.name = 'ApiRequestError';
+    this.code = apiError?.code;
+    this.state = apiError?.state;
+  }
+}
+
 type DevTimeResponse = {
   status: 'ok';
   note: string;
@@ -65,6 +77,13 @@ type DevTimeResponse = {
   devDayOffset: number;
   effectiveDayNumber: number;
   nextResetUtcMs: number;
+};
+
+type CheckInResponse = {
+  status: 'ok';
+  state: UserState;
+  checkedInToday: boolean;
+  nextResetUtcTimestamp: number;
 };
 
 const MILLIS_PER_DAY = 86_400_000;
@@ -104,7 +123,10 @@ const apiRequest = async <T,>(
 
   if (!response.ok) {
     const apiError = data as ApiError;
-    throw new Error(apiError.message || `Request failed: ${response.status}`);
+    throw new ApiRequestError(
+      apiError.message || `Request failed: ${response.status}`,
+      apiError
+    );
   }
 
   return data as T;
@@ -206,14 +228,35 @@ const App = () => {
     try {
       setActionLoading(true);
       setError(null);
-      await apiRequest('/api/checkin', {
+      const checkInResult = await apiRequest<CheckInResponse>('/api/checkin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
+      setMe((prev) =>
+        prev
+          ? {
+              ...prev,
+              state: checkInResult.state,
+              checkedInToday: true,
+              nextResetUtcTimestamp: checkInResult.nextResetUtcTimestamp,
+            }
+          : prev
+      );
       await refreshAfterAction();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to check in';
       setError(message);
+      if (err instanceof ApiRequestError && err.code === 'ALREADY_CHECKED_IN' && err.state) {
+        setMe((prev) =>
+          prev
+            ? {
+                ...prev,
+                state: err.state,
+                checkedInToday: true,
+              }
+            : prev
+        );
+      }
       await refreshAfterAction();
     } finally {
       setActionLoading(false);
