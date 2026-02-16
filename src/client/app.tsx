@@ -80,6 +80,10 @@ type DevTimeResponse = {
   nextResetUtcMs: number;
 };
 
+type DevResetResponse = DevTimeResponse & {
+  stateGeneration: number;
+};
+
 type CheckInResponse = {
   status: 'ok';
   state: UserState;
@@ -314,6 +318,30 @@ const App = () => {
     [refreshAfterAction]
   );
 
+  const onResetDevData = useCallback(async () => {
+    const confirmed = window.confirm(
+      'Reset all challenge progress for this subreddit? This clears streaks, check-ins, and leaderboard stats.'
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      setActionLoading(true);
+      setError(null);
+      await apiRequest<DevResetResponse>('/api/dev/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      await refreshAfterAction();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : 'Failed to reset dev data';
+      setError(message);
+    } finally {
+      setActionLoading(false);
+    }
+  }, [refreshAfterAction]);
+
   if (loading) {
     return (
       <div className="min-h-screen bg-slate-100 text-slate-900 p-6">
@@ -514,6 +542,13 @@ const App = () => {
                 disabled={actionLoading}
               >
                 Reset to 0
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg border border-rose-300 bg-rose-50 text-rose-700 text-sm font-medium"
+                onClick={onResetDevData}
+                disabled={actionLoading}
+              >
+                Reset all test data
               </button>
             </div>
           </section>

@@ -3,6 +3,7 @@ import { redis } from '@devvit/web/server';
 const MILLISECONDS_PER_DAY = 86_400_000;
 const UTC_TIMEZONE = 'UTC';
 const UNSET_DAY = '-1';
+const STATE_GENERATION_FIELD = 'stateGeneration';
 
 export type Privacy = 'public' | 'private';
 
@@ -84,19 +85,29 @@ const parseNonNegativeInt = (
   return parsed;
 };
 
-const serializeUserState = (state: UserState): Record<string, string> => ({
+const serializeUserState = (
+  state: UserState,
+  stateGeneration: number
+): Record<string, string> => ({
   joinedAt: state.joinedAt,
   privacy: state.privacy,
   currentStreak: String(state.currentStreak),
   bestStreak: String(state.bestStreak),
   streakStartDayUTC: toDayStorage(state.streakStartDayUTC),
   lastCheckinDayUTC: toDayStorage(state.lastCheckinDayUTC),
+  [STATE_GENERATION_FIELD]: String(stateGeneration),
 });
 
 const deserializeUserState = (
-  data: Record<string, string>
+  data: Record<string, string>,
+  currentStateGeneration: number
 ): UserState | null => {
   if (Object.keys(data).length === 0) {
+    return null;
+  }
+
+  const storedStateGeneration = parseNonNegativeInt(data[STATE_GENERATION_FIELD], 0);
+  if (storedStateGeneration !== currentStateGeneration) {
     return null;
   }
 
@@ -130,6 +141,16 @@ export const getDevDayOffset = async (subredditId: string): Promise<number> => {
 
   const parsed = Number.parseInt(offset, 10);
   return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+const getStateGeneration = async (subredditId: string): Promise<number> => {
+  const raw = await redis.hGet(keys.devSettings(subredditId), STATE_GENERATION_FIELD);
+  if (!raw) {
+    return 0;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  return Number.isNaN(parsed) || parsed < 0 ? 0 : parsed;
 };
 
 export const setDevDayOffset = async (
@@ -248,8 +269,9 @@ export const getUserState = async (
   subredditId: string,
   userId: string
 ): Promise<UserState | null> => {
+  const stateGeneration = await getStateGeneration(subredditId);
   const stored = await redis.hGetAll(keys.userState(subredditId, userId));
-  return deserializeUserState(stored);
+  return deserializeUserState(stored, stateGeneration);
 };
 
 export const setUserState = async (
@@ -257,7 +279,27 @@ export const setUserState = async (
   userId: string,
   userState: UserState
 ): Promise<void> => {
-  await redis.hSet(keys.userState(subredditId, userId), serializeUserState(userState));
+  const stateGeneration = await getStateGeneration(subredditId);
+  await redis.hSet(
+    keys.userState(subredditId, userId),
+    serializeUserState(userState, stateGeneration)
+  );
+};
+
+export const resetChallengeProgress = async (
+  subredditId: string
+): Promise<{ stateGeneration: number }> => {
+  const stateGeneration = await redis.hIncrBy(
+    keys.devSettings(subredditId),
+    STATE_GENERATION_FIELD,
+    1
+  );
+  await redis.hSet(keys.devSettings(subredditId), {
+    devDayOffset: '0',
+  });
+  await redis.del(keys.leaderboard(subredditId), keys.challengeStats(subredditId));
+
+  return { stateGeneration };
 };
 
 const syncLeaderboardEntry = async (

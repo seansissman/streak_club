@@ -12,6 +12,7 @@ import {
   getUserState,
   joinChallenge,
   recordCheckIn,
+  resetChallengeProgress,
   setChallengeConfig,
   setDevDayOffset,
   setPrivacy,
@@ -425,6 +426,53 @@ api.post('/dev/time', async (c) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return jsonError(c, 400, 'DEV_TIME_WRITE_FAILED', message);
+  }
+});
+
+api.post('/dev/reset', async (c) => {
+  try {
+    const { subredditId, subredditName } = requireSubredditContext();
+    try {
+      await requireModerator(subredditName);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
+        return jsonError(
+          c,
+          401,
+          'AUTH_REQUIRED',
+          'You must be logged in to reset dev test data'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can reset dev test data'
+        );
+      }
+      throw error;
+    }
+
+    const { stateGeneration } = await resetChallengeProgress(subredditId);
+    const now = new Date();
+    const utcDayNumberNow = utcDayNumber(now);
+    const devDayOffset = await getDevDayOffset(subredditId);
+    const effectiveDayNumber = await getTodayDayNumber(subredditId, now);
+
+    return c.json({
+      status: 'ok',
+      note: 'DEV ONLY: Challenge progress reset for this subreddit.',
+      stateGeneration,
+      serverUtcNow: now.toISOString(),
+      utcDayNumberNow,
+      devDayOffset,
+      effectiveDayNumber,
+      nextResetUtcMs: computeNextResetFromDayNumber(effectiveDayNumber),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return jsonError(c, 400, 'DEV_RESET_FAILED', message);
   }
 });
 
