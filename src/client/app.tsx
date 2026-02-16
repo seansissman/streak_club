@@ -35,6 +35,7 @@ type MeResponse = {
   status: 'ok';
   state: UserState | null;
   checkedInToday: boolean;
+  canCheckInToday?: boolean;
   nextResetUtcTimestamp: number;
   myRank: number | null;
   isModerator: boolean;
@@ -198,6 +199,8 @@ const App = () => {
     () => shouldRenderCheckInButton(me, devTime),
     [devTime, me]
   );
+  const isPastEffectiveDayLocked =
+    isJoined && !hasCheckedInToday && me?.canCheckInToday === false;
 
   const refreshAfterAction = useCallback(async () => {
     await loadAll();
@@ -362,6 +365,13 @@ const App = () => {
           {isJoined && hasCheckedInToday && (
             <div className="w-full rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 p-3 font-semibold text-center">
               ✅ Checked in today
+            </div>
+          )}
+
+          {isPastEffectiveDayLocked && (
+            <div className="w-full rounded-lg bg-amber-50 text-amber-800 border border-amber-200 p-3 text-sm text-center">
+              This effective day is before your latest check-in. Move dev day
+              offset forward to continue testing.
             </div>
           )}
 

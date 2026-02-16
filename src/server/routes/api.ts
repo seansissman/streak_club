@@ -78,9 +78,15 @@ const parsePrivacy = (value: unknown): Privacy | null => {
 };
 
 const checkedInToday = (state: UserState | null, day: number): boolean =>
-  state?.lastCheckinDayUTC !== null &&
-  state?.lastCheckinDayUTC !== undefined &&
-  state.lastCheckinDayUTC >= day;
+  state?.lastCheckinDayUTC === day;
+
+const canCheckInToday = (state: UserState | null, day: number): boolean => {
+  if (!state || state.lastCheckinDayUTC === null) {
+    return true;
+  }
+
+  return day > state.lastCheckinDayUTC;
+};
 
 const isModerator = async (
   subredditName: string,
@@ -265,15 +271,21 @@ api.post('/checkin', async (c) => {
       );
     }
 
-    if (state.lastCheckinDayUTC !== null && state.lastCheckinDayUTC >= today) {
-      const isFutureOffsetDay = state.lastCheckinDayUTC > today;
+    if (state.lastCheckinDayUTC === today) {
       return jsonError(
         c,
         409,
         'ALREADY_CHECKED_IN',
-        isFutureOffsetDay
-          ? 'You are already checked in for this effective day (DEV offset). Adjust dev day offset forward or wait for reset.'
-          : 'You already checked in today (UTC). Come back after the daily reset.',
+        'You already checked in today (UTC). Come back after the daily reset.',
+        state
+      );
+    }
+    if (state.lastCheckinDayUTC !== null && state.lastCheckinDayUTC > today) {
+      return jsonError(
+        c,
+        409,
+        'PAST_EFFECTIVE_DAY',
+        'This effective day is earlier than your latest check-in. Move dev day offset forward to continue.',
         state
       );
     }
@@ -325,6 +337,7 @@ api.get('/me', async (c) => {
       status: 'ok',
       state,
       checkedInToday: checkedInToday(state, today),
+      canCheckInToday: canCheckInToday(state, today),
       nextResetUtcTimestamp: computeNextResetUTC(now),
       myRank,
       isModerator: moderator,

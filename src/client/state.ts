@@ -5,6 +5,7 @@ export type UserStateView = {
 export type MeStateView = {
   state: UserStateView | null;
   checkedInToday?: boolean;
+  canCheckInToday?: boolean;
 };
 
 export type DevTimeView = {
@@ -35,4 +36,14 @@ export const isCheckedInToday = (
 export const shouldRenderCheckInButton = (
   me: MeStateView | null,
   devTime: DevTimeView
-): boolean => isUserJoined(me) && !isCheckedInToday(me, devTime);
+): boolean => {
+  if (!isUserJoined(me) || isCheckedInToday(me, devTime)) {
+    return false;
+  }
+
+  if (typeof me?.canCheckInToday === 'boolean') {
+    return me.canCheckInToday;
+  }
+
+  return true;
+};
