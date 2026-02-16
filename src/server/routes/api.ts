@@ -7,6 +7,7 @@ import {
   ensureChallengeConfig,
   getChallengeConfig,
   getDevDayOffset,
+  getParticipantCount,
   getTodayDayNumber,
   getChallengeStats,
   getLeaderboard,
@@ -41,6 +42,7 @@ type ConfigRequest = {
   title?: string;
   description?: string;
   badgeThresholds?: number[];
+  confirmTemplateChange?: boolean;
 };
 
 type ValidationErrorPayload = {
@@ -234,6 +236,24 @@ api.post('/config', async (c) => {
     }
 
     const templateId: TemplateId = body.templateId;
+    const confirmTemplateChange = body.confirmTemplateChange === true;
+    const existingConfig = await getChallengeConfig(subredditId);
+    if (templateId !== existingConfig.templateId) {
+      const participantCount = await getParticipantCount(subredditId);
+      if (participantCount > 0 && !confirmTemplateChange) {
+        return c.json(
+          {
+            error: {
+              code: 'TEMPLATE_CHANGE_CONFIRM_REQUIRED',
+              message:
+                'Changing template will update the challenge theme for all users. Existing streaks remain intact.',
+            },
+          },
+          409
+        );
+      }
+    }
+
     const templateDefaults = applyTemplateToConfig(templateId);
     const title = body.title?.trim() ?? templateDefaults.title;
     const description = body.description?.trim() ?? templateDefaults.description;

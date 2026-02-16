@@ -57,6 +57,7 @@ export const keys = {
   challengeConfig: (subredditId: string): string => `cfg:${subredditId}`,
   userState: (subredditId: string, userId: string): string =>
     `user:${subredditId}:${userId}`,
+  participants: (subredditId: string): string => `participants:${subredditId}`,
   leaderboard: (subredditId: string): string => `lb:${subredditId}`,
   challengeStats: (subredditId: string): string => `stats:${subredditId}`,
   devSettings: (subredditId: string): string => `dev:${subredditId}`,
@@ -427,9 +428,17 @@ export const resetChallengeProgress = async (
   await redis.hSet(keys.devSettings(subredditId), {
     devDayOffset: '0',
   });
-  await redis.del(keys.leaderboard(subredditId), keys.challengeStats(subredditId));
+  await redis.del(
+    keys.leaderboard(subredditId),
+    keys.challengeStats(subredditId),
+    keys.participants(subredditId)
+  );
 
   return { stateGeneration };
+};
+
+export const getParticipantCount = async (subredditId: string): Promise<number> => {
+  return await redis.hLen(keys.participants(subredditId));
 };
 
 const syncLeaderboardEntry = async (
@@ -470,7 +479,12 @@ export const joinChallenge = async (
 
   await setUserState(subredditId, userId, initialState);
   await syncLeaderboardEntry(subredditId, userId, initialState);
-  await redis.hIncrBy(keys.challengeStats(subredditId), 'participantsCount', 1);
+  const participantsAdded = await redis.hSet(keys.participants(subredditId), {
+    [userId]: '1',
+  });
+  if (participantsAdded > 0) {
+    await redis.hIncrBy(keys.challengeStats(subredditId), 'participantsCount', 1);
+  }
 
   return initialState;
 };

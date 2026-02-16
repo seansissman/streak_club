@@ -123,6 +123,14 @@ type SaveConfigResponse = {
   config: ChallengeConfig;
 };
 
+type SaveConfigBody = {
+  templateId: TemplateId;
+  title: string;
+  description: string;
+  badgeThresholds: number[];
+  confirmTemplateChange?: boolean;
+};
+
 type ValidationErrorResponse = {
   error: {
     code: string;
@@ -241,6 +249,10 @@ const App = () => {
   const [configTitle, setConfigTitle] = useState('');
   const [configDescription, setConfigDescription] = useState('');
   const [configBadgeThresholdsInput, setConfigBadgeThresholdsInput] = useState('');
+  const [templateChangeConfirmOpen, setTemplateChangeConfirmOpen] = useState(false);
+  const [pendingConfigSaveBody, setPendingConfigSaveBody] = useState<SaveConfigBody | null>(
+    null
+  );
 
   const loadAll = useCallback(async () => {
     const reqTs = Date.now();
@@ -470,6 +482,46 @@ const App = () => {
     setConfigBadgeThresholdsInput(selected.badgeThresholds.join(', '));
   }, [configTemplateId, templates]);
 
+  const saveConfig = useCallback(
+    async (body: SaveConfigBody) => {
+      try {
+        setActionLoading(true);
+        setConfigError(null);
+        setConfigNotice(null);
+        const result = await apiRequest<SaveConfigResponse>('/api/config', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        });
+        setConfig(result.config);
+        setConfigNotice('Configuration saved.');
+        setTemplateChangeConfirmOpen(false);
+        setPendingConfigSaveBody(null);
+        await refreshAfterAction();
+      } catch (err) {
+        if (
+          err instanceof ApiRequestError &&
+          err.code === 'TEMPLATE_CHANGE_CONFIRM_REQUIRED'
+        ) {
+          setPendingConfigSaveBody(body);
+          setTemplateChangeConfirmOpen(true);
+          return;
+        }
+
+        const message = err instanceof Error ? err.message : 'Failed to save config';
+        if (err instanceof ApiRequestError && err.details) {
+          const detailText = formatValidationDetails(err.details);
+          setConfigError(detailText ? `${message}: ${detailText}` : message);
+        } else {
+          setConfigError(message);
+        }
+      } finally {
+        setActionLoading(false);
+      }
+    },
+    [refreshAfterAction]
+  );
+
   const onSaveConfig = useCallback(async () => {
     const title = configTitle.trim();
     const description = configDescription.trim();
@@ -483,41 +535,18 @@ const App = () => {
       setConfigError('Badge thresholds must be positive integers, e.g. 3, 7, 14, 30.');
       return;
     }
-
-    try {
-      setActionLoading(true);
-      setConfigError(null);
-      setConfigNotice(null);
-      const result = await apiRequest<SaveConfigResponse>('/api/config', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          templateId: configTemplateId,
-          title,
-          description,
-          badgeThresholds,
-        }),
-      });
-      setConfig(result.config);
-      setConfigNotice('Configuration saved.');
-      await refreshAfterAction();
-    } catch (err) {
-      const message = err instanceof Error ? err.message : 'Failed to save config';
-      if (err instanceof ApiRequestError && err.details) {
-        const detailText = formatValidationDetails(err.details);
-        setConfigError(detailText ? `${message}: ${detailText}` : message);
-      } else {
-        setConfigError(message);
-      }
-    } finally {
-      setActionLoading(false);
-    }
+    await saveConfig({
+      templateId: configTemplateId,
+      title,
+      description,
+      badgeThresholds,
+    });
   }, [
     configBadgeThresholdsInput,
     configDescription,
     configTemplateId,
     configTitle,
-    refreshAfterAction,
+    saveConfig,
   ]);
 
   if (loading) {
@@ -869,6 +898,44 @@ const App = () => {
           </div>
         )}
       </div>
+
+      {templateChangeConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4">
+          <div className="w-full max-w-md rounded-xl border border-slate-200 bg-white p-5 space-y-4">
+            <h3 className="text-lg font-semibold">Confirm Template Change</h3>
+            <p className="text-sm text-slate-700">
+              Changing template affects all users. Continue?
+            </p>
+            <div className="flex justify-end gap-2">
+              <button
+                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                onClick={() => {
+                  setTemplateChangeConfirmOpen(false);
+                  setPendingConfigSaveBody(null);
+                }}
+                disabled={actionLoading}
+              >
+                Cancel
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-700 text-white text-sm font-medium disabled:opacity-60"
+                onClick={async () => {
+                  if (!pendingConfigSaveBody) {
+                    return;
+                  }
+                  await saveConfig({
+                    ...pendingConfigSaveBody,
+                    confirmTemplateChange: true,
+                  });
+                }}
+                disabled={actionLoading || !pendingConfigSaveBody}
+              >
+                Confirm
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };
