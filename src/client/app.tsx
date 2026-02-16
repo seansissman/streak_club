@@ -95,7 +95,11 @@ const apiRequest = async <T,>(
   path: string,
   init?: RequestInit
 ): Promise<T> => {
-  const response = await fetch(path, init);
+  const method = init?.method?.toUpperCase() ?? 'GET';
+  const response = await fetch(path, {
+    ...init,
+    cache: method === 'GET' ? 'no-store' : init?.cache,
+  });
   const data = (await response.json()) as T | ApiError;
 
   if (!response.ok) {
