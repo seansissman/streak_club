@@ -79,17 +79,20 @@ type ApiError = {
   code: string;
   message: string;
   state?: UserState | null;
+  details?: Record<string, string | string[]>;
 };
 
 class ApiRequestError extends Error {
   readonly code?: string;
   readonly state?: UserState | null;
+  readonly details?: Record<string, string | string[]>;
 
   constructor(message: string, apiError?: ApiError) {
     super(message);
     this.name = 'ApiRequestError';
     this.code = apiError?.code;
     this.state = apiError?.state;
+    this.details = apiError?.details;
   }
 }
 
@@ -117,6 +120,14 @@ type CheckInResponse = {
 type SaveConfigResponse = {
   status: 'ok';
   config: ChallengeConfig;
+};
+
+type ValidationErrorResponse = {
+  error: {
+    code: string;
+    message: string;
+    details?: Record<string, string | string[]>;
+  };
 };
 
 const MILLIS_PER_DAY = 86_400_000;
@@ -156,6 +167,25 @@ const parseBadgeThresholdInput = (value: string): number[] | null => {
   return Array.from(new Set(values)).sort((a, b) => a - b);
 };
 
+const formatValidationDetails = (
+  details?: Record<string, string | string[]>
+): string | null => {
+  if (!details) {
+    return null;
+  }
+
+  const parts = Object.entries(details).map(([field, detail]) => {
+    const detailText = Array.isArray(detail) ? detail.join(', ') : detail;
+    return `${field}: ${detailText}`;
+  });
+
+  if (parts.length === 0) {
+    return null;
+  }
+
+  return parts.join(' | ');
+};
+
 const apiRequest = async <T,>(
   path: string,
   init?: RequestInit
@@ -165,10 +195,21 @@ const apiRequest = async <T,>(
     ...init,
     cache: method === 'GET' ? 'no-store' : init?.cache,
   });
-  const data = (await response.json()) as T | ApiError;
+  const data = (await response.json()) as
+    | T
+    | ApiError
+    | ValidationErrorResponse;
 
   if (!response.ok) {
-    const apiError = data as ApiError;
+    const validationError = (data as ValidationErrorResponse).error;
+    const apiError: ApiError = validationError
+      ? {
+          status: 'error',
+          code: validationError.code,
+          message: validationError.message,
+          details: validationError.details,
+        }
+      : (data as ApiError);
     throw new ApiRequestError(
       apiError.message || `Request failed: ${response.status}`,
       apiError
@@ -461,7 +502,12 @@ const App = () => {
       await refreshAfterAction();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to save config';
-      setConfigError(message);
+      if (err instanceof ApiRequestError && err.details) {
+        const detailText = formatValidationDetails(err.details);
+        setConfigError(detailText ? `${message}: ${detailText}` : message);
+      } else {
+        setConfigError(message);
+      }
     } finally {
       setActionLoading(false);
     }

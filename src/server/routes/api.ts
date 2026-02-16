@@ -22,7 +22,12 @@ import {
   type Privacy,
   type UserState,
 } from '../core/streak';
-import { TEMPLATES, isTemplateId, type TemplateId } from '../core/templates';
+import {
+  TEMPLATES,
+  applyTemplateToConfig,
+  isTemplateId,
+  type TemplateId,
+} from '../core/templates';
 
 type ErrorResponse = {
   status: 'error';
@@ -36,6 +41,14 @@ type ConfigRequest = {
   title?: string;
   description?: string;
   badgeThresholds?: number[];
+};
+
+type ValidationErrorPayload = {
+  error: {
+    code: string;
+    message: string;
+    details: Record<string, string | string[]>;
+  };
 };
 
 type PrivacyRequest = {
@@ -81,6 +94,25 @@ const parsePrivacy = (value: unknown): Privacy | null => {
   }
 
   return null;
+};
+
+const jsonValidationError = (
+  c: HonoContext,
+  code: string,
+  message: string,
+  details: Record<string, string | string[]>
+) => c.json<ValidationErrorPayload>({ error: { code, message, details } }, 400);
+
+const isSortedUnique = (values: number[]): boolean => {
+  for (let i = 0; i < values.length; i += 1) {
+    if (!Number.isInteger(values[i]) || values[i] <= 0) {
+      return false;
+    }
+    if (i > 0 && values[i] <= values[i - 1]) {
+      return false;
+    }
+  }
+  return true;
 };
 
 const checkedInToday = (state: UserState | null, day: number): boolean =>
@@ -190,18 +222,57 @@ api.post('/config', async (c) => {
       .json<ConfigRequest>()
       .catch(() => ({} as ConfigRequest));
     if (!isTemplateId(body.templateId)) {
-      return jsonError(
+      return jsonValidationError(
         c,
-        400,
         'INVALID_TEMPLATE_ID',
-        'templateId must be one of: custom, habit_30, coding_daily, fitness_daily, study_daily'
+        'Config validation failed',
+        {
+          templateId:
+            'templateId must be one of: custom, habit_30, coding_daily, fitness_daily, study_daily',
+        }
       );
     }
 
     const templateId: TemplateId = body.templateId;
-    const title = body.title?.trim();
-    const description = body.description?.trim();
-    const badgeThresholds = body.badgeThresholds;
+    const templateDefaults = applyTemplateToConfig(templateId);
+    const title = body.title?.trim() ?? templateDefaults.title;
+    const description = body.description?.trim() ?? templateDefaults.description;
+    const badgeThresholds = body.badgeThresholds ?? templateDefaults.badgeThresholds;
+
+    const validationDetails: Record<string, string | string[]> = {};
+
+    if (title.length < 3 || title.length > 120) {
+      validationDetails.title = 'title must be 3..120 characters';
+    }
+    if (description.length > 500) {
+      validationDetails.description = 'description must be 0..500 characters';
+    }
+    if (!Array.isArray(badgeThresholds)) {
+      validationDetails.badgeThresholds = 'badgeThresholds must be an array of integers';
+    } else {
+      if (badgeThresholds.length === 0) {
+        validationDetails.badgeThresholds = 'badgeThresholds cannot be empty';
+      } else if (badgeThresholds.length > 10) {
+        validationDetails.badgeThresholds = 'badgeThresholds must contain at most 10 values';
+      } else {
+        const maxValue = Math.max(...badgeThresholds);
+        if (maxValue > 365) {
+          validationDetails.badgeThresholds = 'badgeThresholds values must be <= 365';
+        } else if (!isSortedUnique(badgeThresholds)) {
+          validationDetails.badgeThresholds =
+            'badgeThresholds must be positive integers in sorted unique order';
+        }
+      }
+    }
+
+    if (Object.keys(validationDetails).length > 0) {
+      return jsonValidationError(
+        c,
+        'INVALID_CONFIG_FIELDS',
+        'Config validation failed',
+        validationDetails
+      );
+    }
 
     const config = await setChallengeConfig(subredditId, {
       templateId,
