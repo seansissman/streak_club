@@ -5,6 +5,7 @@ import {
   computeNextResetFromDayNumber,
   computeNextResetUTC,
   ensureChallengeConfig,
+  getChallengeConfig,
   getDevDayOffset,
   getTodayDayNumber,
   getChallengeStats,
@@ -20,7 +21,7 @@ import {
   type Privacy,
   type UserState,
 } from '../core/streak';
-import { isTemplateId, type TemplateId } from '../core/templates';
+import { TEMPLATES, isTemplateId, type TemplateId } from '../core/templates';
 
 type ErrorResponse = {
   status: 'error';
@@ -131,7 +132,7 @@ api.get('/config', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
     const today = await getTodayDayNumber(subredditId);
-    const config = await ensureChallengeConfig(subredditId);
+    const config = await getChallengeConfig(subredditId);
     const stats = await getChallengeStats(subredditId, today);
 
     return c.json({
@@ -142,6 +143,18 @@ api.get('/config', async (c) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return jsonError(c, 400, 'CONFIG_READ_FAILED', message);
+  }
+});
+
+api.get('/templates', async (c) => {
+  try {
+    return c.json({
+      status: 'ok',
+      templates: TEMPLATES,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return jsonError(c, 400, 'TEMPLATES_READ_FAILED', message);
   }
 });
 
@@ -173,36 +186,19 @@ api.post('/config', async (c) => {
     const body = await c.req
       .json<ConfigRequest>()
       .catch(() => ({} as ConfigRequest));
-    let templateId: TemplateId | undefined;
-    if (body.templateId !== undefined) {
-      if (!isTemplateId(body.templateId)) {
-        return jsonError(
-          c,
-          400,
-          'INVALID_TEMPLATE_ID',
-          'templateId must be one of: custom, habit_30, coding_daily, fitness_daily, study_daily'
-        );
-      }
-      templateId = body.templateId;
-    }
-
-    const title = body.title?.trim();
-    const description = body.description?.trim();
-    const badgeThresholds = body.badgeThresholds;
-
-    if (
-      templateId === undefined &&
-      title === undefined &&
-      description === undefined &&
-      badgeThresholds === undefined
-    ) {
+    if (!isTemplateId(body.templateId)) {
       return jsonError(
         c,
         400,
-        'INVALID_CONFIG',
-        'provide at least one of templateId, title, description, or badgeThresholds'
+        'INVALID_TEMPLATE_ID',
+        'templateId must be one of: custom, habit_30, coding_daily, fitness_daily, study_daily'
       );
     }
+
+    const templateId: TemplateId = body.templateId;
+    const title = body.title?.trim();
+    const description = body.description?.trim();
+    const badgeThresholds = body.badgeThresholds;
 
     const config = await setChallengeConfig(subredditId, {
       templateId,
