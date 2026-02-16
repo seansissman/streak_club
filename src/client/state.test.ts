@@ -1,0 +1,17 @@
+import { describe, expect, it } from 'vitest';
+
+import { shouldRenderCheckInButton } from './state';
+
+describe('client check-in rendering state', () => {
+  it('does not render check-in button when checkedInToday is true', () => {
+    const me = {
+      state: {
+        lastCheckinDayUTC: 20500,
+      },
+      checkedInToday: true,
+    };
+
+    const result = shouldRenderCheckInButton(me, { effectiveDayNumber: 20500 });
+    expect(result).toBe(false);
+  });
+});

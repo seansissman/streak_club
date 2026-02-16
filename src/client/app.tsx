@@ -2,6 +2,7 @@ import './index.css';
 
 import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
+import { isCheckedInToday, isUserJoined, shouldRenderCheckInButton } from './state';
 
 type Privacy = 'public' | 'private';
 
@@ -164,22 +165,12 @@ const App = () => {
     return () => window.clearInterval(timer);
   }, [me?.nextResetUtcTimestamp]);
 
-  const isJoined = Boolean(me?.state);
-  const hasCheckedInToday = useMemo(() => {
-    if (!me?.state) {
-      return false;
-    }
-
-    if (typeof me.checkedInToday === 'boolean') {
-      return me.checkedInToday;
-    }
-
-    if (devTime?.effectiveDayNumber == null || me.state.lastCheckinDayUTC == null) {
-      return false;
-    }
-
-    return me.state.lastCheckinDayUTC === devTime.effectiveDayNumber;
-  }, [devTime?.effectiveDayNumber, me]);
+  const isJoined = useMemo(() => isUserJoined(me), [me]);
+  const hasCheckedInToday = useMemo(() => isCheckedInToday(me, devTime), [devTime, me]);
+  const canRenderCheckIn = useMemo(
+    () => shouldRenderCheckInButton(me, devTime),
+    [devTime, me]
+  );
 
   const refreshAfterAction = useCallback(async () => {
     await loadAll();
@@ -310,7 +301,7 @@ const App = () => {
             </button>
           )}
 
-          {isJoined && !hasCheckedInToday && (
+          {canRenderCheckIn && (
             <button
               className="w-full h-12 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold disabled:opacity-60"
               onClick={onCheckIn}
