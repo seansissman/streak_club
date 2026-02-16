@@ -78,7 +78,9 @@ const parsePrivacy = (value: unknown): Privacy | null => {
 };
 
 const checkedInToday = (state: UserState | null, day: number): boolean =>
-  state?.lastCheckinDayUTC === day;
+  state?.lastCheckinDayUTC !== null &&
+  state?.lastCheckinDayUTC !== undefined &&
+  state.lastCheckinDayUTC >= day;
 
 const isModerator = async (
   subredditName: string,
@@ -263,12 +265,15 @@ api.post('/checkin', async (c) => {
       );
     }
 
-    if (state.lastCheckinDayUTC === today) {
+    if (state.lastCheckinDayUTC !== null && state.lastCheckinDayUTC >= today) {
+      const isFutureOffsetDay = state.lastCheckinDayUTC > today;
       return jsonError(
         c,
         409,
         'ALREADY_CHECKED_IN',
-        'You already checked in today (UTC). Come back after the daily reset.',
+        isFutureOffsetDay
+          ? 'You are already checked in for this effective day (DEV offset). Adjust dev day offset forward or wait for reset.'
+          : 'You already checked in today (UTC). Come back after the daily reset.',
         state
       );
     }
