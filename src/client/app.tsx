@@ -711,6 +711,7 @@ const App = () => {
         {me?.isModerator && (
           <section className="bg-white rounded-xl p-5 border border-indigo-200 space-y-3">
             <h2 className="text-lg font-semibold">Challenge Config (Moderator)</h2>
+            <p className="text-xs text-slate-500">Only one active tracker per subreddit.</p>
             {config?.activePostId && (
               <p className="text-sm text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
                 A streak tracker already exists. Open the existing tracker instead:{' '}
@@ -730,67 +731,82 @@ const App = () => {
                 creating your first challenge post.
               </p>
             )}
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              <label className="text-sm">
-                <span className="block mb-1 text-slate-600">Template</span>
-                <select
-                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                  value={configTemplateId}
-                  onChange={(event) =>
-                    setConfigTemplateId(event.target.value as TemplateId)
-                  }
-                  disabled={actionLoading}
-                >
-                  {templates.map((template) => (
-                    <option key={template.id} value={template.id}>
-                      {template.label}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <div className="flex items-end">
-                <button
-                  className="w-full sm:w-auto px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                  onClick={onLoadTemplateDefaults}
-                  disabled={actionLoading || templates.length === 0}
-                >
-                  Load template
-                </button>
+
+            <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 space-y-2">
+              <h3 className="text-sm font-semibold text-slate-800">Template Selection</h3>
+              <p className="text-xs text-slate-600">
+                Templates provide recommended wording and badge milestones.
+              </p>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <label className="text-sm">
+                  <span className="block mb-1 text-slate-600">Template</span>
+                  <select
+                    className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                    value={configTemplateId}
+                    onChange={(event) =>
+                      setConfigTemplateId(event.target.value as TemplateId)
+                    }
+                    disabled={actionLoading}
+                  >
+                    {templates.map((template) => (
+                      <option key={template.id} value={template.id}>
+                        {template.label}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+                <div className="flex items-end">
+                  <button
+                    className="w-full sm:w-auto px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                    onClick={onLoadTemplateDefaults}
+                    disabled={actionLoading || templates.length === 0}
+                  >
+                    Load template
+                  </button>
+                </div>
               </div>
             </div>
 
-            <label className="text-sm block">
-              <span className="block mb-1 text-slate-600">Title</span>
-              <input
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                value={configTitle}
-                onChange={(event) => setConfigTitle(event.target.value)}
-                disabled={actionLoading}
-              />
-            </label>
+            <div className="rounded-lg border border-slate-200 p-3 space-y-3">
+              <h3 className="text-sm font-semibold text-slate-800">Editable Fields</h3>
+              <p className="text-xs text-slate-600">
+                You can edit these anytime without affecting user streaks.
+              </p>
+              <label className="text-sm block">
+                <span className="block mb-1 text-slate-600">Title</span>
+                <input
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                  value={configTitle}
+                  onChange={(event) => setConfigTitle(event.target.value)}
+                  disabled={actionLoading}
+                />
+              </label>
 
-            <label className="text-sm block">
-              <span className="block mb-1 text-slate-600">Description</span>
-              <textarea
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 min-h-24"
-                value={configDescription}
-                onChange={(event) => setConfigDescription(event.target.value)}
-                disabled={actionLoading}
-              />
-            </label>
+              <label className="text-sm block">
+                <span className="block mb-1 text-slate-600">Description</span>
+                <textarea
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 min-h-24"
+                  value={configDescription}
+                  onChange={(event) => setConfigDescription(event.target.value)}
+                  disabled={actionLoading}
+                />
+              </label>
 
-            <label className="text-sm block">
-              <span className="block mb-1 text-slate-600">
-                Badge thresholds (comma-separated)
-              </span>
-              <input
-                className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
-                value={configBadgeThresholdsInput}
-                onChange={(event) => setConfigBadgeThresholdsInput(event.target.value)}
-                placeholder="3, 7, 14, 30"
-                disabled={actionLoading}
-              />
-            </label>
+              <label className="text-sm block">
+                <span className="block mb-1 text-slate-600">
+                  Badge thresholds (comma-separated)
+                </span>
+                <input
+                  className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2"
+                  value={configBadgeThresholdsInput}
+                  onChange={(event) =>
+                    setConfigBadgeThresholdsInput(event.target.value)
+                  }
+                  placeholder="3, 7, 14, 30"
+                  disabled={actionLoading}
+                />
+              </label>
+            </div>
 
             <div className="flex items-center gap-2">
               <button
