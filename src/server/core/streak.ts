@@ -279,6 +279,19 @@ const defaultChallengeConfig = (now: number = Date.now()): ChallengeConfig => {
   };
 };
 
+const isBlank = (value: string | undefined): boolean => !value || value.trim().length === 0;
+
+export const isConfigSetupRequired = (config: ChallengeConfig): boolean => {
+  const customDefaults = applyTemplateToConfig('custom');
+  const genericCustomTitle =
+    config.templateId === 'custom' &&
+    (isBlank(config.title) || config.title.trim() === customDefaults.title);
+  const blankContent = isBlank(config.title) || isBlank(config.description);
+  const missingBadges = !Array.isArray(config.badgeThresholds) || config.badgeThresholds.length === 0;
+
+  return genericCustomTitle || blankContent || missingBadges;
+};
+
 const deserializeChallengeConfig = (
   data: Record<string, string>,
   fallbackNow: number

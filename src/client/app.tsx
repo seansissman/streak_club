@@ -42,6 +42,7 @@ type UserState = {
 type ConfigResponse = {
   status: 'ok';
   config: ChallengeConfig;
+  configNeedsSetup?: boolean;
   stats: {
     participantsCount: number;
     checkedInTodayCount: number;
@@ -181,6 +182,7 @@ const App = () => {
   const [config, setConfig] = useState<ChallengeConfig | null>(null);
   const [participantsCount, setParticipantsCount] = useState(0);
   const [checkedInTodayCount, setCheckedInTodayCount] = useState(0);
+  const [configNeedsSetup, setConfigNeedsSetup] = useState(false);
   const [templates, setTemplates] = useState<ChallengeTemplate[]>([]);
   const [me, setMe] = useState<MeResponse | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardResponse['leaderboard']>([]);
@@ -209,6 +211,7 @@ const App = () => {
     ]);
 
     setConfig(configRes.config);
+    setConfigNeedsSetup(Boolean(configRes.configNeedsSetup));
     setTemplates(templatesRes.templates);
     setParticipantsCount(configRes.stats.participantsCount);
     setCheckedInTodayCount(configRes.stats.checkedInTodayCount);
@@ -486,6 +489,12 @@ const App = () => {
           <p className="text-slate-700">
             {config?.description ?? 'Join and check in daily at 00:00 UTC.'}
           </p>
+          {configNeedsSetup && !me?.isModerator && (
+            <div className="w-full rounded-lg bg-amber-50 text-amber-800 border border-amber-200 p-3 text-sm">
+              Challenge configuration is not set yet. A moderator needs to pick a
+              template and save the challenge settings first.
+            </div>
+          )}
 
           <div className="grid grid-cols-2 gap-3 text-sm">
             <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
@@ -626,6 +635,12 @@ const App = () => {
         {me?.isModerator && (
           <section className="bg-white rounded-xl p-5 border border-indigo-200 space-y-3">
             <h2 className="text-lg font-semibold">Challenge Config (Moderator)</h2>
+            {configNeedsSetup && (
+              <p className="text-sm text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
+                First-time setup: pick a template, adjust fields, and save before
+                creating your first challenge post.
+              </p>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <label className="text-sm">
                 <span className="block mb-1 text-slate-600">Template</span>

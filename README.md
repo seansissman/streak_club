@@ -45,6 +45,19 @@ npm run dev
 
 Daily reset is at **00:00 UTC**.
 
+## Creating your first challenge post
+
+1. In your subreddit mod menu, click **Create a new post**.
+2. On first run, the app opens a setup post and prompts moderators to configure the challenge.
+3. In **Challenge Config (Moderator)**:
+   - pick a template,
+   - optionally edit title/description/badge thresholds,
+   - click **Save**.
+4. Click **Create a new post** again from the subreddit mod menu.
+5. The created challenge post title is pulled from your saved config title (safely trimmed if needed).
+
+After initial setup, config remains editable and future post creation uses the latest saved title.
+
 ## Quick Command Reference
 
 ```bash

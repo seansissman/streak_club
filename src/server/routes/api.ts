@@ -11,6 +11,7 @@ import {
   getChallengeStats,
   getLeaderboard,
   getUserState,
+  isConfigSetupRequired,
   joinChallenge,
   recordCheckIn,
   resetChallengeProgress,
@@ -134,10 +135,12 @@ api.get('/config', async (c) => {
     const today = await getTodayDayNumber(subredditId);
     const config = await getChallengeConfig(subredditId);
     const stats = await getChallengeStats(subredditId, today);
+    const configNeedsSetup = isConfigSetupRequired(config);
 
     return c.json({
       status: 'ok',
       config,
+      configNeedsSetup,
       stats,
     });
   } catch (error) {

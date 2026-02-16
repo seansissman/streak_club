@@ -8,8 +8,8 @@ export const triggers = new Hono();
 
 triggers.post('/on-app-install', async (c) => {
   try {
-    await ensureChallengeConfig(context.subredditId);
-    const post = await createPost();
+    const config = await ensureChallengeConfig(context.subredditId);
+    const post = await createPost(config.title);
     const input = await c.req.json<OnAppInstallRequest>();
 
     return c.json<TriggerResponse>(
