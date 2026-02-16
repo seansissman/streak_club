@@ -146,8 +146,10 @@ const App = () => {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [devNotice, setDevNotice] = useState<string | null>(null);
   const [countdown, setCountdown] = useState('00:00:00');
   const [devTime, setDevTime] = useState<DevTimeResponse | null>(null);
+  const [resetConfirmArmed, setResetConfirmArmed] = useState(false);
 
   const loadAll = useCallback(async () => {
     const reqTs = Date.now();
@@ -319,28 +321,35 @@ const App = () => {
   );
 
   const onResetDevData = useCallback(async () => {
-    const confirmed = window.confirm(
-      'Reset all challenge progress for this subreddit? This clears streaks, check-ins, and leaderboard stats.'
-    );
-    if (!confirmed) {
+    if (!resetConfirmArmed) {
+      setResetConfirmArmed(true);
+      setDevNotice(
+        'Press "Confirm reset data" to wipe streaks/check-ins/leaderboard for this subreddit.'
+      );
       return;
     }
 
     try {
       setActionLoading(true);
       setError(null);
-      await apiRequest<DevResetResponse>('/api/dev/reset', {
+      setDevNotice(null);
+      const result = await apiRequest<DevResetResponse>('/api/dev/reset', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
+      setDevNotice(
+        `Reset complete. Generation ${result.stateGeneration}; offset now ${result.devDayOffset}.`
+      );
+      setResetConfirmArmed(false);
       await refreshAfterAction();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to reset dev data';
       setError(message);
+      setResetConfirmArmed(false);
     } finally {
       setActionLoading(false);
     }
-  }, [refreshAfterAction]);
+  }, [refreshAfterAction, resetConfirmArmed]);
 
   if (loading) {
     return (
@@ -501,6 +510,11 @@ const App = () => {
             <p className="text-sm text-amber-700">
               DEV ONLY: Simulates day changes for testing.
             </p>
+            {devNotice && (
+              <p className="text-sm text-amber-800 bg-amber-100 border border-amber-300 rounded-lg px-3 py-2">
+                {devNotice}
+              </p>
+            )}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
               <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
                 <div className="text-slate-500">UTC day now</div>
@@ -548,8 +562,20 @@ const App = () => {
                 onClick={onResetDevData}
                 disabled={actionLoading}
               >
-                Reset all test data
+                {resetConfirmArmed ? 'Confirm reset data' : 'Reset all test data'}
               </button>
+              {resetConfirmArmed && (
+                <button
+                  className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                  onClick={() => {
+                    setResetConfirmArmed(false);
+                    setDevNotice(null);
+                  }}
+                  disabled={actionLoading}
+                >
+                  Cancel
+                </button>
+              )}
             </div>
           </section>
         )}
