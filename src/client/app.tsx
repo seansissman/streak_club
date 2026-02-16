@@ -123,11 +123,12 @@ const App = () => {
   const [devTime, setDevTime] = useState<DevTimeResponse | null>(null);
 
   const loadAll = useCallback(async () => {
+    const reqTs = Date.now();
     const [configRes, meRes, leaderboardRes, devTimeRes] = await Promise.all([
-      apiRequest<ConfigResponse>('/api/config'),
-      apiRequest<MeResponse>('/api/me'),
-      apiRequest<LeaderboardResponse>('/api/leaderboard?limit=10'),
-      apiRequest<DevTimeResponse>('/api/dev/time').catch(() => null),
+      apiRequest<ConfigResponse>(`/api/config?ts=${reqTs}`),
+      apiRequest<MeResponse>(`/api/me?ts=${reqTs}`),
+      apiRequest<LeaderboardResponse>(`/api/leaderboard?limit=10&ts=${reqTs}`),
+      apiRequest<DevTimeResponse>(`/api/dev/time?ts=${reqTs}`).catch(() => null),
     ]);
 
     setConfig(configRes.config);
