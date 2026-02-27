@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Context as HonoContext } from 'hono';
 import { context, reddit } from '@devvit/web/server';
-import { getAccessLevel, isDev, isMod } from '../access';
+import { getAccessLevel, isDev, isMod, type AccessLevel } from '../access';
 import {
   computeNextResetFromDayNumber,
   ensureChallengeConfig,
@@ -499,10 +499,28 @@ api.get('/me', async (c) => {
       nextResetUtcTimestamp: computeNextResetFromDayNumber(today),
       myRank,
       isModerator: isMod(accessLevel),
+      accessLevel,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return jsonError(c, 401, 'ME_FAILED', message);
+  }
+});
+
+api.get('/viewer-context', async (c) => {
+  try {
+    const accessLevel = await getAccessLevel(context);
+    return c.json({
+      status: 'ok',
+      accessLevel,
+    });
+  } catch (error) {
+    console.warn('viewer-context fallback to user', error);
+    const fallback: AccessLevel = 'user';
+    return c.json({
+      status: 'ok',
+      accessLevel: fallback,
+    });
   }
 });
 

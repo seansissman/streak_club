@@ -11,6 +11,7 @@ import {
   shouldRenderCheckInButton,
   shouldShowInlineExpandLink,
 } from './state';
+import { useAccessLevel, type AccessLevel } from './use_access_level';
 
 type Privacy = 'public' | 'private';
 type TemplateId =
@@ -73,6 +74,7 @@ type MeResponse = {
   nextResetUtcTimestamp: number;
   myRank: number | null;
   isModerator: boolean;
+  accessLevel: AccessLevel;
 };
 
 type LeaderboardResponse = {
@@ -361,6 +363,7 @@ const apiRequest = async <T,>(
 };
 
 const App = () => {
+  const accessLevel = useAccessLevel();
   const [config, setConfig] = useState<ChallengeConfig | null>(null);
   const [participantsTotal, setParticipantsTotal] = useState(0);
   const [checkinsToday, setCheckinsToday] = useState(0);
@@ -504,7 +507,8 @@ const App = () => {
   const shouldShowExpandButton = mode === 'inline' && isTouch;
   const isInlineExpandLinkVisible = shouldShowInlineExpandLink(isInlineMode);
   const shouldEnableCardExpand = shouldEnableInlineCardExpand(isInlineMode);
-  const showDevToolsPanel = true;
+  const canUseModTools = accessLevel === 'mod' || accessLevel === 'dev';
+  const showDevToolsPanel = accessLevel === 'dev';
   const highestBadge = me?.state ? getHighestBadge(me.state.badges) : null;
   const checkedInEncouragement = useMemo(() => {
     const effectiveUtcDay =
@@ -889,7 +893,7 @@ const App = () => {
             </div>
           )}
 
-          {configNeedsSetup && !me?.isModerator && (
+          {configNeedsSetup && accessLevel === 'user' && (
             <div className="w-full rounded-lg bg-amber-50 text-amber-800 border border-amber-200 p-3 text-sm">
               Challenge configuration is not set yet. A moderator needs to pick a
               template and save the challenge settings first.
@@ -1092,7 +1096,7 @@ const App = () => {
           </div>
         </section>
 
-        {me?.isModerator && (
+        {canUseModTools && (
           <section className="bg-white rounded-xl p-4 border border-slate-200 space-y-2">
             <h2 className="text-base font-semibold">Setup / Admin</h2>
             {config?.activePostId ? (
@@ -1134,7 +1138,7 @@ const App = () => {
           </section>
         )}
 
-        {me?.isModerator && (
+        {canUseModTools && (
           <section className="bg-white rounded-xl p-5 border border-indigo-200 space-y-3">
             <h2 className="text-lg font-semibold">Challenge Config (Moderator)</h2>
             <p className="text-xs text-slate-500">Only one active tracker per subreddit.</p>
