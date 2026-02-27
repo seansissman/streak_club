@@ -5,7 +5,6 @@ import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   getCompetitionRankAtIndex,
-  isDevToolsVisible,
   isCheckedInToday,
   isUserJoined,
   shouldEnableInlineCardExpand,
@@ -503,14 +502,9 @@ const App = () => {
       : window.matchMedia('(pointer: coarse)').matches;
   const isInlineMode = mode === 'inline';
   const shouldShowExpandButton = mode === 'inline' && isTouch;
-  const isProductionBuild = import.meta.env.PROD;
   const isInlineExpandLinkVisible = shouldShowInlineExpandLink(isInlineMode);
   const shouldEnableCardExpand = shouldEnableInlineCardExpand(isInlineMode);
-  const showDevToolsPanel = isDevToolsVisible({
-    isModerator: me?.isModerator === true,
-    isProductionBuild,
-    configDevMode: config?.devMode === true,
-  });
+  const showDevToolsPanel = true;
   const highestBadge = me?.state ? getHighestBadge(me.state.badges) : null;
   const checkedInEncouragement = useMemo(() => {
     const effectiveUtcDay =
