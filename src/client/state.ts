@@ -16,12 +16,6 @@ export type LeaderboardRowView = {
   currentStreak: number;
 };
 
-export type DevToolsVisibilityInput = {
-  isModerator: boolean;
-  isProductionBuild: boolean;
-  configDevMode: boolean;
-};
-
 export const isUserJoined = (me: MeStateView | null): boolean => Boolean(me?.state);
 
 export const isCheckedInToday = (
@@ -78,10 +72,3 @@ export const shouldShowInlineExpandLink = (isInlineMode: boolean): boolean =>
 
 export const shouldEnableInlineCardExpand = (isInlineMode: boolean): boolean =>
   isInlineMode;
-
-export const isDevToolsVisible = ({
-  isModerator,
-  isProductionBuild,
-  configDevMode,
-}: DevToolsVisibilityInput): boolean =>
-  isModerator && (!isProductionBuild || configDevMode === true);
