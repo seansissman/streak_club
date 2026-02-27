@@ -76,6 +76,11 @@ type MeResponse = {
   devToolsGate: {
     enabled: boolean;
     reason: string;
+    debug: {
+      envVarTrue: boolean;
+      settingTrue: boolean;
+      isPlaytest: boolean;
+    };
   };
   devToolsBuild: string;
 };
@@ -509,8 +514,7 @@ const App = () => {
   const shouldShowExpandButton = mode === 'inline' && isTouch;
   const isInlineExpandLinkVisible = shouldShowInlineExpandLink(isInlineMode);
   const shouldEnableCardExpand = shouldEnableInlineCardExpand(isInlineMode);
-  const showDevToolsPanel =
-    me?.isModerator === true && me.devToolsGate.enabled === true;
+  const showDevToolsPanel = me?.devToolsGate.enabled === true;
   const highestBadge = me?.state ? getHighestBadge(me.state.badges) : null;
   const checkedInEncouragement = useMemo(() => {
     const effectiveUtcDay =
