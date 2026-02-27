@@ -3,6 +3,11 @@ import { settings } from '@devvit/web/server';
 export type DevToolsGate = {
   enabled: boolean;
   reason: string;
+  debug: {
+    envVarTrue: boolean;
+    settingTrue: boolean;
+    isPlaytest: boolean;
+  };
 };
 
 const GIT_SHA_ENV_KEYS = [
@@ -29,8 +34,67 @@ const getReason = (envEnabled: boolean, settingEnabled: boolean): string => {
   return 'off';
 };
 
-export const getDevToolsGate = async (_context: unknown): Promise<DevToolsGate> => {
-  const envEnabled = process.env.DEV_TOOLS_ENABLED === 'true';
+const isPlaytestContext = (value: unknown): boolean => {
+  if (typeof value !== 'object' || value === null) {
+    return false;
+  }
+
+  if ('isPlaytest' in value && value.isPlaytest === true) {
+    return true;
+  }
+
+  if ('appVersion' in value && typeof value.appVersion === 'string') {
+    const appVersion = value.appVersion.trim();
+    const numericParts = appVersion
+      .split('.')
+      .map((part) => Number.parseInt(part, 10))
+      .filter((part) => Number.isInteger(part));
+    if (numericParts.length >= 4) {
+      return true;
+    }
+  }
+
+  if (
+    'subredditName' in value &&
+    typeof value.subredditName === 'string' &&
+    value.subredditName.toLowerCase().endsWith('_dev')
+  ) {
+    return true;
+  }
+
+  if (
+    !('metadata' in value) ||
+    typeof value.metadata !== 'object' ||
+    value.metadata === null
+  ) {
+    return false;
+  }
+
+  return Object.entries(value.metadata).some(([key, metadataValue]) => {
+    if (key.toLowerCase().includes('playtest')) {
+      return true;
+    }
+
+    if (
+      typeof metadataValue !== 'object' ||
+      metadataValue === null ||
+      !('values' in metadataValue) ||
+      !Array.isArray(metadataValue.values)
+    ) {
+      return false;
+    }
+
+    return metadataValue.values.some(
+      (entry: unknown) =>
+        typeof entry === 'string' && entry.toLowerCase().includes('playtest')
+    );
+  });
+};
+
+export const getDevToolsGate = async (context: unknown): Promise<DevToolsGate> => {
+  const envVarTrue = process.env.DEV_TOOLS_ENABLED === 'true';
+  const isPlaytest = isPlaytestContext(context);
+  const envEnabled = envVarTrue && isPlaytest;
 
   let settingEnabled = false;
   try {
@@ -40,8 +104,13 @@ export const getDevToolsGate = async (_context: unknown): Promise<DevToolsGate> 
   }
 
   return {
-    enabled: envEnabled || settingEnabled,
+    enabled: settingEnabled || envEnabled,
     reason: getReason(envEnabled, settingEnabled),
+    debug: {
+      envVarTrue,
+      settingTrue: settingEnabled,
+      isPlaytest,
+    },
   };
 };
 
