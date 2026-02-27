@@ -5,13 +5,13 @@ import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   getCompetitionRankAtIndex,
+  isDevToolsVisible,
   isCheckedInToday,
   isUserJoined,
   shouldEnableInlineCardExpand,
   shouldRenderCheckInButton,
   shouldShowInlineExpandLink,
 } from './state';
-import { DebugBanner, type DebugGateInfo } from './debug_banner';
 
 type Privacy = 'public' | 'private';
 type TemplateId =
@@ -74,8 +74,6 @@ type MeResponse = {
   nextResetUtcTimestamp: number;
   myRank: number | null;
   isModerator: boolean;
-  isPlaytest?: boolean;
-  debugGate: DebugGateInfo;
 };
 
 type LeaderboardResponse = {
@@ -186,13 +184,6 @@ type CheckInFeedback = {
 type SaveConfigResponse = {
   status: 'ok';
   config: ChallengeConfig;
-};
-
-type CreateTrackerPostResponse = {
-  status: 'ok';
-  activePostId: string;
-  navigateTo: string;
-  message: string;
 };
 
 type SaveConfigBody = {
@@ -384,9 +375,6 @@ const App = () => {
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [devNotice, setDevNotice] = useState<string | null>(null);
-  const [adminNotice, setAdminNotice] = useState<string | null>(null);
-  const [adminNoticeLink, setAdminNoticeLink] = useState<string | null>(null);
-  const [adminError, setAdminError] = useState<string | null>(null);
   const [configNotice, setConfigNotice] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
   const [countdown, setCountdown] = useState('00:00:00');
@@ -407,13 +395,6 @@ const App = () => {
   );
   const [checkInFeedback, setCheckInFeedback] = useState<CheckInFeedback | null>(null);
   const [showCheckInCelebration, setShowCheckInCelebration] = useState(false);
-  const isPlaytestQuery =
-    typeof window !== 'undefined' &&
-    new URLSearchParams(window.location.search).has('playtest');
-  const isPlaytestReferrer =
-    typeof document !== 'undefined' && document.referrer.includes('playtest=');
-  const isPlaytestSession = isPlaytestQuery || isPlaytestReferrer;
-  const playtestQuery = isPlaytestSession ? '&playtest=1' : '';
 
   const loadAll = useCallback(async () => {
     const reqTs = Date.now();
@@ -429,8 +410,8 @@ const App = () => {
       apiRequest<TemplatesResponse>(`/api/templates?ts=${reqTs}`),
       apiRequest<MeResponse>(`/api/me?ts=${reqTs}`),
       apiRequest<LeaderboardResponse>(`/api/leaderboard?limit=10&ts=${reqTs}`),
-      apiRequest<DevTimeResponse>(`/api/dev/time?ts=${reqTs}${playtestQuery}`).catch(() => null),
-      apiRequest<DevStatsDebugResponse>(`/api/dev/stats/debug?ts=${reqTs}${playtestQuery}`).catch(
+      apiRequest<DevTimeResponse>(`/api/dev/time?ts=${reqTs}`).catch(() => null),
+      apiRequest<DevStatsDebugResponse>(`/api/dev/stats/debug?ts=${reqTs}`).catch(
         () => null
       ),
     ]);
@@ -446,7 +427,7 @@ const App = () => {
     setLeaderboard(leaderboardRes.leaderboard);
     setDevTime(devTimeRes);
     setDevStatsDebug(devStatsDebugRes);
-  }, [playtestQuery]);
+  }, []);
 
   useEffect(() => {
     if (!config) {
@@ -522,10 +503,14 @@ const App = () => {
       : window.matchMedia('(pointer: coarse)').matches;
   const isInlineMode = mode === 'inline';
   const shouldShowExpandButton = mode === 'inline' && isTouch;
+  const isProductionBuild = import.meta.env.PROD;
   const isInlineExpandLinkVisible = shouldShowInlineExpandLink(isInlineMode);
   const shouldEnableCardExpand = shouldEnableInlineCardExpand(isInlineMode);
-  const showDevToolsPanel =
-    me?.isModerator === true && me.debugGate.enabled === true;
+  const showDevToolsPanel = isDevToolsVisible({
+    isModerator: me?.isModerator === true,
+    isProductionBuild,
+    configDevMode: config?.devMode === true,
+  });
   const highestBadge = me?.state ? getHighestBadge(me.state.badges) : null;
   const checkedInEncouragement = useMemo(() => {
     const effectiveUtcDay =
@@ -651,14 +636,11 @@ const App = () => {
       try {
         setActionLoading(true);
         setError(null);
-        await apiRequest<DevTimeResponse>(
-          `/api/dev/time?playtest=${isPlaytestSession ? '1' : '0'}`,
-          {
+        await apiRequest<DevTimeResponse>('/api/dev/time', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ devTimeOffsetSeconds: nextOffset }),
-          }
-        );
+        });
         await refreshAfterAction();
       } catch (err) {
         const message =
@@ -668,7 +650,7 @@ const App = () => {
         setActionLoading(false);
       }
     },
-    [devTime?.devTimeOffsetSeconds, isPlaytestSession, refreshAfterAction]
+    [devTime?.devTimeOffsetSeconds, refreshAfterAction]
   );
 
   const onSetDevTimeOffset = useCallback(
@@ -676,14 +658,11 @@ const App = () => {
       try {
         setActionLoading(true);
         setError(null);
-        await apiRequest<DevTimeResponse>(
-          `/api/dev/time?playtest=${isPlaytestSession ? '1' : '0'}`,
-          {
+        await apiRequest<DevTimeResponse>('/api/dev/time', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ devTimeOffsetSeconds: nextOffsetSeconds }),
-          }
-        );
+        });
         await refreshAfterAction();
       } catch (err) {
         const message =
@@ -693,20 +672,17 @@ const App = () => {
         setActionLoading(false);
       }
     },
-    [isPlaytestSession, refreshAfterAction]
+    [refreshAfterAction]
   );
 
   const onRunBoundaryStress = useCallback(async () => {
     try {
       setActionLoading(true);
       setError(null);
-      const result = await apiRequest<DevStressResponse>(
-        `/api/dev/stress?playtest=${isPlaytestSession ? '1' : '0'}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        }
-      );
+      const result = await apiRequest<DevStressResponse>('/api/dev/stress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
       setStressReports(result.reports);
       const passed = result.reports.filter((report) => report.ok).length;
       setDevNotice(`Boundary stress complete: ${passed}/${result.reports.length} checks passed.`);
@@ -718,55 +694,24 @@ const App = () => {
     } finally {
       setActionLoading(false);
     }
-  }, [isPlaytestSession, refreshAfterAction]);
+  }, [refreshAfterAction]);
 
   const onRepairTodayStats = useCallback(async () => {
     try {
       setActionLoading(true);
       setError(null);
-      setAdminError(null);
-      const result = await apiRequest<DevStatsRepairResponse>(
-        `/api/dev/stats/repair?playtest=${isPlaytestSession ? '1' : '0'}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        }
+      const result = await apiRequest<DevStatsRepairResponse>('/api/dev/stats/repair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      setDevNotice(
+        `Repaired today stats (day ${result.utcDayNumber}): ${result.oldCheckinsToday} -> ${result.newCheckinsToday} (set size ${result.todaySetSize}).`
       );
-      const message =
-        result.todaySetSize === 0
-          ? `Repaired today stats: ${result.oldCheckinsToday} → 0 (no check-ins recorded today)`
-          : `Repaired today stats: ${result.oldCheckinsToday} → ${result.newCheckinsToday}`;
-      setDevNotice(message);
-      setAdminNotice(message);
-      setAdminNoticeLink(null);
       await refreshAfterAction();
     } catch (err) {
       const message =
         err instanceof Error ? err.message : 'Failed to repair today stats';
       setError(message);
-      setAdminError(message);
-    } finally {
-      setActionLoading(false);
-    }
-  }, [isPlaytestSession, refreshAfterAction]);
-
-  const onCreateTrackerPost = useCallback(async () => {
-    try {
-      setActionLoading(true);
-      setError(null);
-      setAdminError(null);
-      setAdminNoticeLink(null);
-      const result = await apiRequest<CreateTrackerPostResponse>('/api/mod/create-post', {
-        method: 'POST',
-      });
-      setAdminNotice(result.message);
-      setAdminNoticeLink(result.navigateTo);
-      await refreshAfterAction();
-    } catch (err) {
-      const message =
-        err instanceof Error ? err.message : 'Failed to create tracker post';
-      setError(message);
-      setAdminError(message);
     } finally {
       setActionLoading(false);
     }
@@ -775,10 +720,9 @@ const App = () => {
   const onResetDevData = useCallback(async () => {
     if (!resetConfirmArmed) {
       setResetConfirmArmed(true);
-      const message =
-        'Press "Confirm reset data" to wipe streaks/check-ins/leaderboard for this subreddit.';
-      setDevNotice(message);
-      setAdminNotice(message);
+      setDevNotice(
+        'Press "Confirm reset data" to wipe streaks/check-ins/leaderboard for this subreddit.'
+      );
       return;
     }
 
@@ -786,16 +730,13 @@ const App = () => {
       setActionLoading(true);
       setError(null);
       setDevNotice(null);
-      const result = await apiRequest<DevResetResponse>(
-        `/api/dev/reset?playtest=${isPlaytestSession ? '1' : '0'}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-        }
+      const result = await apiRequest<DevResetResponse>('/api/dev/reset', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      setDevNotice(
+        `Reset complete. Generation ${result.stateGeneration}; offset now ${result.devTimeOffsetSeconds}s.`
       );
-      const message = `Reset complete. Generation ${result.stateGeneration}; offset now ${result.devTimeOffsetSeconds}s.`;
-      setDevNotice(message);
-      setAdminNotice(message);
       setStressReports([]);
       setResetConfirmArmed(false);
       await refreshAfterAction();
@@ -806,7 +747,7 @@ const App = () => {
     } finally {
       setActionLoading(false);
     }
-  }, [isPlaytestSession, refreshAfterAction, resetConfirmArmed]);
+  }, [refreshAfterAction, resetConfirmArmed]);
 
   const onLoadTemplateDefaults = useCallback(() => {
     const selected = templates.find((template) => template.id === configTemplateId);
@@ -902,7 +843,6 @@ const App = () => {
   return (
     <div className="bg-slate-100 text-slate-900 p-3 sm:p-4">
       <div className="max-w-3xl mx-auto space-y-3">
-        <DebugBanner debugGate={me?.debugGate ?? null} />
         <section className="bg-white rounded-xl p-4 border border-slate-200 space-y-2">
           <h1 className="text-2xl font-bold">{config?.title ?? 'Streak Engine'}</h1>
           <p className="text-slate-700">
@@ -1175,18 +1115,9 @@ const App = () => {
                 . If this post is unpinned, engagement will drop.
               </p>
             ) : (
-              <div className="space-y-2">
-                <p className="text-sm text-amber-700">
-                  No active tracker post found. Create one to start.
-                </p>
-                <button
-                  className="px-3 py-2 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-700 text-sm font-medium"
-                  onClick={onCreateTrackerPost}
-                  disabled={actionLoading}
-                >
-                  Create tracker post
-                </button>
-              </div>
+              <p className="text-sm text-amber-700">
+                No active tracker post found. Create one to start.
+              </p>
             )}
             <p className="text-xs text-slate-600">
               After posting, pin this tracker post in your subreddit.
@@ -1206,29 +1137,6 @@ const App = () => {
                 Repair Today Stats
               </button>
             </div>
-            {adminNotice && (
-              <p className="text-sm text-emerald-700 bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2">
-                {adminNotice}
-                {adminNoticeLink && (
-                  <>
-                    {' '}
-                    <a
-                      className="underline font-medium"
-                      href={adminNoticeLink}
-                      target="_blank"
-                      rel="noreferrer"
-                    >
-                      Open post
-                    </a>
-                  </>
-                )}
-              </p>
-            )}
-            {adminError && (
-              <p className="text-sm text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
-                {adminError}
-              </p>
-            )}
           </section>
         )}
 
