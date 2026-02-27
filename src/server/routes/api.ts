@@ -1,7 +1,6 @@
 import { Hono } from 'hono';
 import type { Context as HonoContext } from 'hono';
 import { context, reddit } from '@devvit/web/server';
-import { getDevBuildLabel, getDevToolsGate } from '../core/dev_tools_gate';
 import {
   computeNextResetFromDayNumber,
   ensureChallengeConfig,
@@ -103,34 +102,6 @@ const requireUserId = (): string => {
   return context.userId;
 };
 
-const hasModeratorContextPermission = (): boolean => {
-  if (!('metadata' in context) || typeof context.metadata !== 'object' || context.metadata === null) {
-    return false;
-  }
-
-  if (!('devvit-mod-permissions' in context.metadata)) {
-    return false;
-  }
-
-  const modPermissionField = context.metadata['devvit-mod-permissions'];
-  if (
-    typeof modPermissionField !== 'object' ||
-    modPermissionField === null ||
-    !('values' in modPermissionField) ||
-    !Array.isArray(modPermissionField.values)
-  ) {
-    return false;
-  }
-
-  const tokens = modPermissionField.values
-    .join(',')
-    .split(',')
-    .map((token) => token.trim().toLowerCase())
-    .filter((token) => token.length > 0);
-
-  return tokens.some((token) => token !== 'none' && token !== '[]');
-};
-
 const parsePrivacy = (value: unknown): Privacy | null => {
   if (value === 'public' || value === 'private') {
     return value;
@@ -192,10 +163,6 @@ const isModerator = async (
 const requireModerator = async (
   subredditName: string
 ): Promise<{ username: string }> => {
-  if (hasModeratorContextPermission()) {
-    return { username: context.username ?? 'mod' };
-  }
-
   const username = context.username;
   if (!username) {
     throw new Error('AUTH_REQUIRED');
@@ -208,9 +175,21 @@ const requireModerator = async (
   return { username };
 };
 
-const requireDevToolsAccess = async (): Promise<void> => {
-  const gate = await getDevToolsGate(context);
-  if (!gate.enabled) {
+const isDevModeEnabled = async (subredditId: string): Promise<boolean> => {
+  if (process.env.NODE_ENV !== 'production') {
+    return true;
+  }
+
+  const config = await getChallengeConfig(subredditId);
+  return config.devMode === true;
+};
+
+const requireDevToolsAccess = async (
+  subredditId: string,
+  subredditName: string
+): Promise<void> => {
+  await requireModerator(subredditName);
+  if (!(await isDevModeEnabled(subredditId))) {
     throw new Error('DEV_MODE_DISABLED');
   }
 };
@@ -533,9 +512,7 @@ api.get('/me', async (c) => {
     const utcNow = await getUtcNow(subredditId);
     const today = utcNow.utcDayNumber;
     const username = context.username;
-    const moderator = hasModeratorContextPermission()
-      ? true
-      :
+    const moderator =
       typeof username === 'string' && username.length > 0
         ? await isModerator(subredditName, username)
         : false;
@@ -555,8 +532,6 @@ api.get('/me', async (c) => {
       nextResetUtcTimestamp: computeNextResetFromDayNumber(today),
       myRank,
       isModerator: moderator,
-      devToolsGate: await getDevToolsGate(context),
-      devToolsBuild: getDevBuildLabel(),
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -566,9 +541,9 @@ api.get('/me', async (c) => {
 
 api.get('/dev/time', async (c) => {
   try {
-    const { subredditId } = requireSubredditContext();
+    const { subredditId, subredditName } = requireSubredditContext();
     try {
-      await requireDevToolsAccess();
+      await requireDevToolsAccess(subredditId, subredditName);
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -576,6 +551,14 @@ api.get('/dev/time', async (c) => {
           401,
           'AUTH_REQUIRED',
           'You must be logged in to view dev time settings'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can view dev time settings'
         );
       }
       if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
@@ -606,9 +589,9 @@ api.get('/dev/time', async (c) => {
 
 api.post('/dev/time', async (c) => {
   try {
-    const { subredditId } = requireSubredditContext();
+    const { subredditId, subredditName } = requireSubredditContext();
     try {
-      await requireDevToolsAccess();
+      await requireDevToolsAccess(subredditId, subredditName);
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -616,6 +599,14 @@ api.post('/dev/time', async (c) => {
           401,
           'AUTH_REQUIRED',
           'You must be logged in to update dev time settings'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can update dev time settings'
         );
       }
       if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
@@ -665,10 +656,10 @@ api.post('/dev/time', async (c) => {
 
 api.post('/dev/reset', async (c) => {
   try {
-    const { subredditId } = requireSubredditContext();
+    const { subredditId, subredditName } = requireSubredditContext();
     const userId = requireUserId();
     try {
-      await requireDevToolsAccess();
+      await requireDevToolsAccess(subredditId, subredditName);
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -676,6 +667,14 @@ api.post('/dev/reset', async (c) => {
           401,
           'AUTH_REQUIRED',
           'You must be logged in to reset dev test data'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can reset dev test data'
         );
       }
       if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
@@ -710,9 +709,9 @@ api.post('/dev/reset', async (c) => {
 
 api.post('/dev/stress', async (c) => {
   try {
-    const { subredditId } = requireSubredditContext();
+    const { subredditId, subredditName } = requireSubredditContext();
     try {
-      await requireDevToolsAccess();
+      await requireDevToolsAccess(subredditId, subredditName);
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -720,6 +719,14 @@ api.post('/dev/stress', async (c) => {
           401,
           'AUTH_REQUIRED',
           'You must be logged in to run UTC reset stress tests'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can run UTC reset stress tests'
         );
       }
       if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
@@ -929,9 +936,9 @@ api.post('/dev/stress', async (c) => {
 
 api.post('/dev/stats/repair', async (c) => {
   try {
-    const { subredditId } = requireSubredditContext();
+    const { subredditId, subredditName } = requireSubredditContext();
     try {
-      await requireDevToolsAccess();
+      await requireModerator(subredditName);
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -941,8 +948,13 @@ api.post('/dev/stats/repair', async (c) => {
           'You must be logged in to repair stats'
         );
       }
-      if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
-        return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can repair stats'
+        );
       }
       throw error;
     }
@@ -965,9 +977,9 @@ api.post('/dev/stats/repair', async (c) => {
 
 api.get('/dev/stats/debug', async (c) => {
   try {
-    const { subredditId } = requireSubredditContext();
+    const { subredditId, subredditName } = requireSubredditContext();
     try {
-      await requireDevToolsAccess();
+      await requireDevToolsAccess(subredditId, subredditName);
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -975,6 +987,14 @@ api.get('/dev/stats/debug', async (c) => {
           401,
           'AUTH_REQUIRED',
           'You must be logged in to view stats debug snapshot'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can view stats debug snapshot'
         );
       }
       if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {

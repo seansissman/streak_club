@@ -5,6 +5,7 @@ import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   getCompetitionRankAtIndex,
+  isDevToolsVisible,
   isCheckedInToday,
   isUserJoined,
   shouldEnableInlineCardExpand,
@@ -73,16 +74,6 @@ type MeResponse = {
   nextResetUtcTimestamp: number;
   myRank: number | null;
   isModerator: boolean;
-  devToolsGate: {
-    enabled: boolean;
-    reason: string;
-    debug: {
-      envVarTrue: boolean;
-      settingTrue: boolean;
-      isPlaytest: boolean;
-    };
-  };
-  devToolsBuild: string;
 };
 
 type LeaderboardResponse = {
@@ -512,9 +503,14 @@ const App = () => {
       : window.matchMedia('(pointer: coarse)').matches;
   const isInlineMode = mode === 'inline';
   const shouldShowExpandButton = mode === 'inline' && isTouch;
+  const isProductionBuild = import.meta.env.PROD;
   const isInlineExpandLinkVisible = shouldShowInlineExpandLink(isInlineMode);
   const shouldEnableCardExpand = shouldEnableInlineCardExpand(isInlineMode);
-  const showDevToolsPanel = me?.devToolsGate.enabled === true;
+  const showDevToolsPanel = isDevToolsVisible({
+    isModerator: me?.isModerator === true,
+    isProductionBuild,
+    configDevMode: config?.devMode === true,
+  });
   const highestBadge = me?.state ? getHighestBadge(me.state.badges) : null;
   const checkedInEncouragement = useMemo(() => {
     const effectiveUtcDay =
@@ -847,11 +843,6 @@ const App = () => {
   return (
     <div className="bg-slate-100 text-slate-900 p-3 sm:p-4">
       <div className="max-w-3xl mx-auto space-y-3">
-        {me?.devToolsGate.enabled === true && (
-          <div className="rounded-md border border-amber-200 bg-amber-50 px-2 py-1 text-[11px] text-amber-800">
-            Dev tools: ON | gate: {me.devToolsGate.reason} | build: {me.devToolsBuild}
-          </div>
-        )}
         <section className="bg-white rounded-xl p-4 border border-slate-200 space-y-2">
           <h1 className="text-2xl font-bold">{config?.title ?? 'Streak Engine'}</h1>
           <p className="text-slate-700">
