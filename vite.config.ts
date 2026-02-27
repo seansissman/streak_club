@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite';
+import { defineConfig, loadEnv } from 'vite';
 import react from '@vitejs/plugin-react';
 import tailwind from '@tailwindcss/vite';
 import { devvit } from '@devvit/start/vite';
@@ -25,10 +25,16 @@ const gitSha = (() => {
   }
 })();
 
-export default defineConfig({
-  define: {
-    'process.env.APP_VERSION': JSON.stringify(appVersion),
-    'process.env.APP_GIT_SHA': JSON.stringify(gitSha),
-  },
-  plugins: [react(), tailwind(), devvit()],
+export default defineConfig(({ mode }) => {
+  const env = loadEnv(mode, process.cwd(), '');
+  const devToolsEnabled = env.DEV_TOOLS_ENABLED ?? process.env.DEV_TOOLS_ENABLED ?? '';
+
+  return {
+    define: {
+      'process.env.APP_VERSION': JSON.stringify(appVersion),
+      'process.env.APP_GIT_SHA': JSON.stringify(gitSha),
+      'process.env.DEV_TOOLS_ENABLED': JSON.stringify(devToolsEnabled),
+    },
+    plugins: [react(), tailwind(), devvit()],
+  };
 });
