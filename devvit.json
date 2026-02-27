@@ -41,6 +41,16 @@
   "triggers": {
     "onAppInstall": "/internal/triggers/on-app-install"
   },
+  "settings": {
+    "global": {
+      "devToolsEnabled": {
+        "type": "boolean",
+        "label": "Enable debug tools",
+        "helpText": "Enables developer-only debug tools and debug banner.",
+        "defaultValue": false
+      }
+    }
+  },
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build"
