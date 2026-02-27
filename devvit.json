@@ -14,7 +14,12 @@
     "entrypoints": {
       "default": {
         "inline": true,
-        "entry": "app.html"
+        "entry": "app.html",
+        "height": "tall"
+      },
+      "app": {
+        "entry": "app.html",
+        "height": "tall"
       }
     }
   },

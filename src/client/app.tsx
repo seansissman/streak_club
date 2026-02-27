@@ -1,8 +1,17 @@
 import './index.css';
 
+import { context, getWebViewMode, requestExpandedMode } from '@devvit/web/client';
 import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
-import { isCheckedInToday, isUserJoined, shouldRenderCheckInButton } from './state';
+import {
+  getCompetitionRankAtIndex,
+  isDevToolsVisible,
+  isCheckedInToday,
+  isUserJoined,
+  shouldEnableInlineCardExpand,
+  shouldRenderCheckInButton,
+  shouldShowInlineExpandLink,
+} from './state';
 
 type Privacy = 'public' | 'private';
 type TemplateId =
@@ -18,6 +27,7 @@ type ChallengeConfig = {
   description: string;
   timezone: 'UTC';
   badgeThresholds: number[];
+  devMode: boolean;
   activePostId: string | null;
   updatedAt: number;
   createdAt: number;
@@ -38,6 +48,10 @@ type UserState = {
   bestStreak: number;
   streakStartDayUTC: number | null;
   lastCheckinDayUTC: number | null;
+  freezeTokens: number;
+  freezeSaves: number;
+  badges: string[];
+  isParticipant: boolean;
 };
 
 type ConfigResponse = {
@@ -45,8 +59,10 @@ type ConfigResponse = {
   config: ChallengeConfig;
   configNeedsSetup?: boolean;
   stats: {
-    participantsCount: number;
-    checkedInTodayCount: number;
+    participantsTotal: number;
+    checkinsToday: number;
+    checkinsAllTime: number;
+    longestStreakAllTime: number;
   };
 };
 
@@ -91,9 +107,15 @@ class ApiRequestError extends Error {
   constructor(message: string, apiError?: ApiError) {
     super(message);
     this.name = 'ApiRequestError';
-    this.code = apiError?.code;
-    this.state = apiError?.state;
-    this.details = apiError?.details;
+    if (apiError?.code !== undefined) {
+      this.code = apiError.code;
+    }
+    if (apiError?.state !== undefined) {
+      this.state = apiError.state;
+    }
+    if (apiError?.details !== undefined) {
+      this.details = apiError.details;
+    }
   }
 }
 
@@ -101,14 +123,44 @@ type DevTimeResponse = {
   status: 'ok';
   note: string;
   serverUtcNow: string;
+  simulatedUtcNow: string;
   utcDayNumberNow: number;
-  devDayOffset: number;
   effectiveDayNumber: number;
+  devTimeOffsetSeconds: number;
   nextResetUtcMs: number;
+  secondsUntilReset: number;
 };
 
 type DevResetResponse = DevTimeResponse & {
   stateGeneration: number;
+};
+
+type DevStressResponse = {
+  status: 'ok';
+  reports: Array<{
+    ok: boolean;
+    label: string;
+    details?: string;
+  }>;
+};
+
+type DevStatsRepairResponse = {
+  status: 'ok';
+  utcDayNumber: number;
+  oldCheckinsToday: number;
+  newCheckinsToday: number;
+  todaySetSize: number;
+};
+
+type DevStatsDebugResponse = {
+  status: 'ok';
+  utcDayNumber: number;
+  lastStatsDay: number;
+  participantsTotal: number;
+  checkinsToday: number;
+  checkinsAllTime: number;
+  longestStreakAllTime: number;
+  todaySetSize: number;
 };
 
 type CheckInResponse = {
@@ -116,6 +168,17 @@ type CheckInResponse = {
   state: UserState;
   checkedInToday: boolean;
   nextResetUtcTimestamp: number;
+  usedFreeze: boolean;
+  earnedFreeze: boolean;
+  tokenCount: number;
+  earnedBadge: string | null;
+};
+
+type CheckInFeedback = {
+  day: number;
+  usedFreeze: boolean;
+  earnedFreeze: boolean;
+  earnedBadge: string | null;
 };
 
 type SaveConfigResponse = {
@@ -128,6 +191,7 @@ type SaveConfigBody = {
   title: string;
   description: string;
   badgeThresholds: number[];
+  devMode: boolean;
   confirmTemplateChange?: boolean;
 };
 
@@ -163,6 +227,8 @@ const formatCountdown = (target: number): string => {
   return `${hours}:${minutes}:${seconds}`;
 };
 
+const formatDays = (n: number): string => (n === 1 ? '1 day' : `${n} days`);
+
 const parseBadgeThresholdInput = (value: string): number[] | null => {
   const values = value
     .split(',')
@@ -195,15 +261,76 @@ const formatValidationDetails = (
   return parts.join(' | ');
 };
 
+const BADGE_MILESTONES: Array<{ milestone: number; badge: string }> = [
+  { milestone: 7, badge: 'Committed' },
+  { milestone: 30, badge: 'Consistent' },
+  { milestone: 90, badge: 'Disciplined' },
+  { milestone: 180, badge: 'Unstoppable' },
+  { milestone: 365, badge: 'Legend' },
+];
+
+const CHECKED_IN_MESSAGES = [
+  'Checked in today! Great job!',
+  'Checked in today! Way to go!',
+  'Checked in today! Keep it going!',
+  'Checked in today! Nice work!',
+  'Checked in today! Hooray!',
+  'Checked in today! Another one!',
+  'Checked in today! Momentum!',
+  'Checked in today! Onward!',
+];
+
+const hashSeed = (seed: string): number => {
+  let total = 0;
+  for (const char of seed) {
+    total += char.charCodeAt(0);
+  }
+  return total;
+};
+
+const formatLeaderboardName = (
+  displayName: string | undefined,
+  userId: string
+): string => {
+  const trimmedDisplayName = displayName?.trim();
+  if (trimmedDisplayName) {
+    return trimmedDisplayName;
+  }
+
+  const trimmedUserId = userId.trim();
+  if (!trimmedUserId) {
+    return 'unknown';
+  }
+
+  if (trimmedUserId.startsWith('t2_')) {
+    return `user_${trimmedUserId.slice(3)}`;
+  }
+
+  return trimmedUserId;
+};
+
+const getHighestBadge = (badges: string[]): string | null => {
+  let highestBadge: string | null = null;
+  let highestMilestone = -1;
+
+  for (const badgeEntry of BADGE_MILESTONES) {
+    if (badges.includes(badgeEntry.badge) && badgeEntry.milestone > highestMilestone) {
+      highestBadge = badgeEntry.badge;
+      highestMilestone = badgeEntry.milestone;
+    }
+  }
+
+  return highestBadge;
+};
+
 const apiRequest = async <T,>(
   path: string,
   init?: RequestInit
 ): Promise<T> => {
   const method = init?.method?.toUpperCase() ?? 'GET';
-  const response = await fetch(path, {
-    ...init,
-    cache: method === 'GET' ? 'no-store' : init?.cache,
-  });
+  const requestInit: RequestInit =
+    method === 'GET' ? { ...init, cache: 'no-store' } : (init ?? {});
+  const response = await fetch(path, requestInit);
   const data = (await response.json()) as
     | T
     | ApiError
@@ -212,12 +339,18 @@ const apiRequest = async <T,>(
   if (!response.ok) {
     const validationError = (data as ValidationErrorResponse).error;
     const apiError: ApiError = validationError
-      ? {
-          status: 'error',
-          code: validationError.code,
-          message: validationError.message,
-          details: validationError.details,
-        }
+      ? validationError.details
+        ? {
+            status: 'error',
+            code: validationError.code,
+            message: validationError.message,
+            details: validationError.details,
+          }
+        : {
+            status: 'error',
+            code: validationError.code,
+            message: validationError.message,
+          }
       : (data as ApiError);
     throw new ApiRequestError(
       apiError.message || `Request failed: ${response.status}`,
@@ -230,8 +363,10 @@ const apiRequest = async <T,>(
 
 const App = () => {
   const [config, setConfig] = useState<ChallengeConfig | null>(null);
-  const [participantsCount, setParticipantsCount] = useState(0);
-  const [checkedInTodayCount, setCheckedInTodayCount] = useState(0);
+  const [participantsTotal, setParticipantsTotal] = useState(0);
+  const [checkinsToday, setCheckinsToday] = useState(0);
+  const [checkinsAllTime, setCheckinsAllTime] = useState(0);
+  const [longestStreakAllTime, setLongestStreakAllTime] = useState(0);
   const [configNeedsSetup, setConfigNeedsSetup] = useState(false);
   const [templates, setTemplates] = useState<ChallengeTemplate[]>([]);
   const [me, setMe] = useState<MeResponse | null>(null);
@@ -245,33 +380,53 @@ const App = () => {
   const [countdown, setCountdown] = useState('00:00:00');
   const [devTime, setDevTime] = useState<DevTimeResponse | null>(null);
   const [resetConfirmArmed, setResetConfirmArmed] = useState(false);
+  const [stressReports, setStressReports] = useState<DevStressResponse['reports']>([]);
+  const [devStatsDebug, setDevStatsDebug] = useState<DevStatsDebugResponse | null>(
+    null
+  );
   const [configTemplateId, setConfigTemplateId] = useState<TemplateId>('custom');
   const [configTitle, setConfigTitle] = useState('');
   const [configDescription, setConfigDescription] = useState('');
   const [configBadgeThresholdsInput, setConfigBadgeThresholdsInput] = useState('');
+  const [configDevMode, setConfigDevMode] = useState(false);
   const [templateChangeConfirmOpen, setTemplateChangeConfirmOpen] = useState(false);
   const [pendingConfigSaveBody, setPendingConfigSaveBody] = useState<SaveConfigBody | null>(
     null
   );
+  const [checkInFeedback, setCheckInFeedback] = useState<CheckInFeedback | null>(null);
+  const [showCheckInCelebration, setShowCheckInCelebration] = useState(false);
 
   const loadAll = useCallback(async () => {
     const reqTs = Date.now();
-    const [configRes, templatesRes, meRes, leaderboardRes, devTimeRes] = await Promise.all([
+    const [
+      configRes,
+      templatesRes,
+      meRes,
+      leaderboardRes,
+      devTimeRes,
+      devStatsDebugRes,
+    ] = await Promise.all([
       apiRequest<ConfigResponse>(`/api/config?ts=${reqTs}`),
       apiRequest<TemplatesResponse>(`/api/templates?ts=${reqTs}`),
       apiRequest<MeResponse>(`/api/me?ts=${reqTs}`),
       apiRequest<LeaderboardResponse>(`/api/leaderboard?limit=10&ts=${reqTs}`),
       apiRequest<DevTimeResponse>(`/api/dev/time?ts=${reqTs}`).catch(() => null),
+      apiRequest<DevStatsDebugResponse>(`/api/dev/stats/debug?ts=${reqTs}`).catch(
+        () => null
+      ),
     ]);
 
     setConfig(configRes.config);
     setConfigNeedsSetup(Boolean(configRes.configNeedsSetup));
     setTemplates(templatesRes.templates);
-    setParticipantsCount(configRes.stats.participantsCount);
-    setCheckedInTodayCount(configRes.stats.checkedInTodayCount);
+    setParticipantsTotal(configRes.stats.participantsTotal);
+    setCheckinsToday(configRes.stats.checkinsToday);
+    setCheckinsAllTime(configRes.stats.checkinsAllTime);
+    setLongestStreakAllTime(configRes.stats.longestStreakAllTime);
     setMe(meRes);
     setLeaderboard(leaderboardRes.leaderboard);
     setDevTime(devTimeRes);
+    setDevStatsDebug(devStatsDebugRes);
   }, []);
 
   useEffect(() => {
@@ -283,6 +438,7 @@ const App = () => {
     setConfigTitle(config.title);
     setConfigDescription(config.description);
     setConfigBadgeThresholdsInput(config.badgeThresholds.join(', '));
+    setConfigDevMode(config.devMode === true);
   }, [config]);
 
   useEffect(() => {
@@ -316,6 +472,18 @@ const App = () => {
     return () => window.clearInterval(timer);
   }, [me?.nextResetUtcTimestamp]);
 
+  useEffect(() => {
+    if (!showCheckInCelebration) {
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      setShowCheckInCelebration(false);
+    }, 1500);
+
+    return () => window.clearTimeout(timer);
+  }, [showCheckInCelebration]);
+
   const isJoined = useMemo(() => isUserJoined(me), [me]);
   const hasCheckedInToday = useMemo(() => isCheckedInToday(me, devTime), [devTime, me]);
   const canRenderCheckIn = useMemo(
@@ -324,6 +492,36 @@ const App = () => {
   );
   const isPastEffectiveDayLocked =
     isJoined && !hasCheckedInToday && me?.canCheckInToday === false;
+  const isCurrentCheckInFeedback =
+    checkInFeedback?.day !== undefined &&
+    checkInFeedback.day === me?.state?.lastCheckinDayUTC;
+  const mode = getWebViewMode();
+  const isTouch =
+    typeof window === 'undefined' ||
+    typeof window.matchMedia !== 'function'
+      ? true
+      : window.matchMedia('(pointer: coarse)').matches;
+  const isInlineMode = mode === 'inline';
+  const shouldShowExpandButton = mode === 'inline' && isTouch;
+  const isProductionBuild = import.meta.env.PROD;
+  const isInlineExpandLinkVisible = shouldShowInlineExpandLink(isInlineMode);
+  const shouldEnableCardExpand = shouldEnableInlineCardExpand(isInlineMode);
+  const showDevToolsPanel = isDevToolsVisible({
+    isModerator: me?.isModerator === true,
+    isProductionBuild,
+    configDevMode: config?.devMode === true,
+  });
+  const highestBadge = me?.state ? getHighestBadge(me.state.badges) : null;
+  const checkedInEncouragement = useMemo(() => {
+    const effectiveUtcDay =
+      devTime?.effectiveDayNumber ??
+      me?.state?.lastCheckinDayUTC ??
+      Math.floor(Date.now() / MILLIS_PER_DAY);
+    const userSeed = context.username ?? me?.state?.joinedAt ?? 'anonymous';
+    const seed = `${userSeed}:${effectiveUtcDay}`;
+    const index = hashSeed(seed) % CHECKED_IN_MESSAGES.length;
+    return CHECKED_IN_MESSAGES[index];
+  }, [devTime?.effectiveDayNumber, me?.state?.joinedAt, me?.state?.lastCheckinDayUTC]);
 
   const refreshAfterAction = useCallback(async () => {
     await loadAll();
@@ -337,6 +535,7 @@ const App = () => {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
+      setCheckInFeedback(null);
       await refreshAfterAction();
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to join challenge';
@@ -354,10 +553,18 @@ const App = () => {
     try {
       setActionLoading(true);
       setError(null);
+      setCheckInFeedback(null);
       const checkInResult = await apiRequest<CheckInResponse>('/api/checkin', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
+      setCheckInFeedback({
+        day: checkInResult.state.lastCheckinDayUTC ?? -1,
+        usedFreeze: checkInResult.usedFreeze,
+        earnedFreeze: checkInResult.earnedFreeze,
+        earnedBadge: checkInResult.earnedBadge,
+      });
+      setShowCheckInCelebration(true);
       setMe((prev) =>
         prev
           ? {
@@ -372,17 +579,24 @@ const App = () => {
     } catch (err) {
       const message = err instanceof Error ? err.message : 'Failed to check in';
       setError(message);
-      if (err instanceof ApiRequestError && err.code === 'ALREADY_CHECKED_IN' && err.state) {
+      const alreadyCheckedInState =
+        err instanceof ApiRequestError ? err.state : null;
+      if (
+        err instanceof ApiRequestError &&
+        err.code === 'ALREADY_CHECKED_IN' &&
+        alreadyCheckedInState
+      ) {
         setMe((prev) =>
           prev
             ? {
                 ...prev,
-                state: err.state,
+                state: alreadyCheckedInState,
                 checkedInToday: true,
               }
             : prev
         );
       }
+      setCheckInFeedback(null);
       await refreshAfterAction();
     } finally {
       setActionLoading(false);
@@ -415,20 +629,44 @@ const App = () => {
     [me?.state, refreshAfterAction]
   );
 
-  const onAdjustDevDayOffset = useCallback(
-    async (nextOffset: number) => {
+  const onAdjustDevTimeOffset = useCallback(
+    async (deltaSeconds: number) => {
+      const currentOffset = devTime?.devTimeOffsetSeconds ?? 0;
+      const nextOffset = currentOffset + deltaSeconds;
       try {
         setActionLoading(true);
         setError(null);
         await apiRequest<DevTimeResponse>('/api/dev/time', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ devDayOffset: nextOffset }),
+          body: JSON.stringify({ devTimeOffsetSeconds: nextOffset }),
         });
         await refreshAfterAction();
       } catch (err) {
         const message =
-          err instanceof Error ? err.message : 'Failed to update dev day offset';
+          err instanceof Error ? err.message : 'Failed to update dev time offset';
+        setError(message);
+      } finally {
+        setActionLoading(false);
+      }
+    },
+    [devTime?.devTimeOffsetSeconds, refreshAfterAction]
+  );
+
+  const onSetDevTimeOffset = useCallback(
+    async (nextOffsetSeconds: number) => {
+      try {
+        setActionLoading(true);
+        setError(null);
+        await apiRequest<DevTimeResponse>('/api/dev/time', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ devTimeOffsetSeconds: nextOffsetSeconds }),
+        });
+        await refreshAfterAction();
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to set dev time offset';
         setError(message);
       } finally {
         setActionLoading(false);
@@ -436,6 +674,48 @@ const App = () => {
     },
     [refreshAfterAction]
   );
+
+  const onRunBoundaryStress = useCallback(async () => {
+    try {
+      setActionLoading(true);
+      setError(null);
+      const result = await apiRequest<DevStressResponse>('/api/dev/stress', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      setStressReports(result.reports);
+      const passed = result.reports.filter((report) => report.ok).length;
+      setDevNotice(`Boundary stress complete: ${passed}/${result.reports.length} checks passed.`);
+      await refreshAfterAction();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to run boundary stress';
+      setError(message);
+    } finally {
+      setActionLoading(false);
+    }
+  }, [refreshAfterAction]);
+
+  const onRepairTodayStats = useCallback(async () => {
+    try {
+      setActionLoading(true);
+      setError(null);
+      const result = await apiRequest<DevStatsRepairResponse>('/api/dev/stats/repair', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+      });
+      setDevNotice(
+        `Repaired today stats (day ${result.utcDayNumber}): ${result.oldCheckinsToday} -> ${result.newCheckinsToday} (set size ${result.todaySetSize}).`
+      );
+      await refreshAfterAction();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to repair today stats';
+      setError(message);
+    } finally {
+      setActionLoading(false);
+    }
+  }, [refreshAfterAction]);
 
   const onResetDevData = useCallback(async () => {
     if (!resetConfirmArmed) {
@@ -455,8 +735,9 @@ const App = () => {
         headers: { 'Content-Type': 'application/json' },
       });
       setDevNotice(
-        `Reset complete. Generation ${result.stateGeneration}; offset now ${result.devDayOffset}.`
+        `Reset complete. Generation ${result.stateGeneration}; offset now ${result.devTimeOffsetSeconds}s.`
       );
+      setStressReports([]);
       setResetConfirmArmed(false);
       await refreshAfterAction();
     } catch (err) {
@@ -540,9 +821,11 @@ const App = () => {
       title,
       description,
       badgeThresholds,
+      devMode: configDevMode,
     });
   }, [
     configBadgeThresholdsInput,
+    configDevMode,
     configDescription,
     configTemplateId,
     configTitle,
@@ -551,61 +834,71 @@ const App = () => {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-slate-100 text-slate-900 p-6">
+      <div className="bg-slate-100 text-slate-900 p-6">
         <div className="max-w-3xl mx-auto">Loading...</div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-slate-100 text-slate-900 p-4 sm:p-6">
-      <div className="max-w-3xl mx-auto space-y-4">
-        <section className="bg-white rounded-xl p-5 border border-slate-200 space-y-3">
+    <div className="bg-slate-100 text-slate-900 p-3 sm:p-4">
+      <div className="max-w-3xl mx-auto space-y-3">
+        <section className="bg-white rounded-xl p-4 border border-slate-200 space-y-2">
           <h1 className="text-2xl font-bold">{config?.title ?? 'Streak Engine'}</h1>
           <p className="text-slate-700">
             {config?.description ?? 'Join and check in daily at 00:00 UTC.'}
+            {isInlineExpandLinkVisible && (
+              <>
+                {' '}
+                <button
+                  className="text-xs text-slate-500 underline hover:text-slate-700 align-baseline"
+                  onClick={(event) => requestExpandedMode(event.nativeEvent, 'app')}
+                >
+                  View full tracker
+                </button>
+              </>
+            )}
           </p>
+
+          {!isJoined && (
+            <div className="flex justify-center">
+              <button
+                className="w-3/4 h-12 rounded-lg border border-blue-800/30 bg-blue-600 hover:bg-blue-700 text-white font-semibold disabled:opacity-60"
+                onClick={onJoin}
+                disabled={actionLoading}
+              >
+                Join Challenge
+              </button>
+            </div>
+          )}
+
+          {(canRenderCheckIn || (isJoined && hasCheckedInToday)) && (
+            <div className="flex flex-col items-center">
+              {canRenderCheckIn ? (
+                <button
+                  className="w-3/4 h-12 rounded-lg border border-emerald-800/30 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold disabled:opacity-60"
+                  onClick={onCheckIn}
+                  disabled={actionLoading}
+                >
+                  Check in for today
+                </button>
+              ) : (
+                <div className="w-3/4 h-12 rounded-lg border border-emerald-300 bg-emerald-100 text-emerald-800 font-semibold flex items-center justify-center">
+                  {checkedInEncouragement}
+                </div>
+              )}
+              {showCheckInCelebration && (
+                <div className="mt-1 text-center text-sm font-semibold text-emerald-700">
+                  🎉👏✨
+                </div>
+              )}
+            </div>
+          )}
+
           {configNeedsSetup && !me?.isModerator && (
             <div className="w-full rounded-lg bg-amber-50 text-amber-800 border border-amber-200 p-3 text-sm">
               Challenge configuration is not set yet. A moderator needs to pick a
               template and save the challenge settings first.
-            </div>
-          )}
-
-          <div className="grid grid-cols-2 gap-3 text-sm">
-            <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
-              <div className="text-slate-500">Participants</div>
-              <div className="text-xl font-semibold">{participantsCount}</div>
-            </div>
-            <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
-              <div className="text-slate-500">Checked in today</div>
-              <div className="text-xl font-semibold">{checkedInTodayCount}</div>
-            </div>
-          </div>
-
-          {!isJoined && (
-            <button
-              className="w-full h-12 rounded-lg bg-blue-600 hover:bg-blue-700 text-white font-semibold disabled:opacity-60"
-              onClick={onJoin}
-              disabled={actionLoading}
-            >
-              Join Challenge
-            </button>
-          )}
-
-          {canRenderCheckIn && (
-            <button
-              className="w-full h-12 rounded-lg bg-emerald-600 hover:bg-emerald-700 text-white font-semibold disabled:opacity-60"
-              onClick={onCheckIn}
-              disabled={actionLoading}
-            >
-              Check in for today
-            </button>
-          )}
-
-          {isJoined && hasCheckedInToday && (
-            <div className="w-full rounded-lg bg-emerald-50 text-emerald-700 border border-emerald-200 p-3 font-semibold text-center">
-              ✅ Checked in today
             </div>
           )}
 
@@ -616,105 +909,201 @@ const App = () => {
             </div>
           )}
 
+          {me?.state && isCurrentCheckInFeedback && checkInFeedback.usedFreeze && (
+            <div className="w-full rounded-lg bg-sky-50 text-sky-800 border border-sky-200 px-3 py-2 text-sm">
+              ❄️ Freeze Token used - your streak stayed alive.
+            </div>
+          )}
+
+          {me?.state && isCurrentCheckInFeedback && checkInFeedback.earnedFreeze && (
+            <div className="w-full rounded-lg bg-emerald-50 text-emerald-800 border border-emerald-200 px-3 py-2 text-sm">
+              🎉 You earned a Freeze Token!
+            </div>
+          )}
+
+          {me?.state &&
+            isCurrentCheckInFeedback &&
+            checkInFeedback.earnedBadge !== null && (
+              <div className="w-full rounded-lg bg-amber-50 text-amber-800 border border-amber-200 px-3 py-2 text-sm">
+                🏅 New Badge Unlocked: {checkInFeedback.earnedBadge}
+              </div>
+            )}
+
           {me?.state && (
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-              <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
-                <div className="text-slate-500">Current streak</div>
-                <div className="text-xl font-semibold">{me.state.currentStreak}</div>
+            <div
+              className={`rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-sm ${
+                shouldEnableCardExpand ? 'cursor-pointer' : ''
+              }`}
+              onClick={
+                shouldEnableCardExpand
+                  ? (event) => requestExpandedMode(event.nativeEvent, 'app')
+                  : undefined
+              }
+            >
+              <div className="text-base font-semibold text-slate-900">
+                🔥 Current Streak: {formatDays(me.state.currentStreak)}
               </div>
-              <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
-                <div className="text-slate-500">Best streak</div>
-                <div className="text-xl font-semibold">{me.state.bestStreak}</div>
+              <div className="text-sm text-slate-700">
+                ❄️ Freeze Tokens: {me.state.freezeTokens}
               </div>
-              <div className="rounded-lg bg-slate-50 border border-slate-200 p-3">
-                <div className="text-slate-500">Last check-in (UTC)</div>
-                <div className="text-base font-semibold">
-                  {formatUtcDay(me.state.lastCheckinDayUTC)}
+              {me.state.freezeTokens === 0 && (
+                <div className="text-xs text-slate-600 mt-1">
+                  Reach a 7-day streak to unlock protection.
                 </div>
+              )}
+              <div className="text-xs text-slate-600 mt-1">
+                One token preserves your streak for one missed day.
               </div>
             </div>
           )}
 
-          <div className="flex items-center justify-between text-sm text-slate-600 border-t border-slate-200 pt-3">
-            <span>Resets at 00:00 UTC</span>
-            <span className="font-mono">{countdown}</span>
-          </div>
+          {me?.state && (
+            <div
+              className={`rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-sm ${
+                shouldEnableCardExpand ? 'cursor-pointer' : ''
+              }`}
+              onClick={
+                shouldEnableCardExpand
+                  ? (event) => requestExpandedMode(event.nativeEvent, 'app')
+                  : undefined
+              }
+            >
+              <div className="text-base font-semibold text-slate-900">
+                🔥 Best Streak: {formatDays(me.state.bestStreak)}
+              </div>
+              <div className="text-sm text-slate-700">🏅 Badge: {highestBadge ?? '—'}</div>
+            </div>
+          )}
 
-          <div className="flex items-center justify-between gap-3">
-            <div className="text-sm text-slate-600">
-              {me?.state ? (
-                me.state.privacy === 'private' ? (
-                  <span>Private (not ranked)</span>
-                ) : me.myRank ? (
-                  <span>My rank: #{me.myRank}</span>
+          <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 space-y-2">
+            <div className="flex items-center justify-between text-sm text-slate-600">
+              <span>Resets at 00:00 UTC</span>
+              <span className="font-mono">{countdown}</span>
+            </div>
+            <div className="flex items-center justify-between gap-3">
+              <div className="text-sm text-slate-600">
+                {me?.state ? (
+                  me.state.privacy === 'private' ? (
+                    <span>Private (not ranked)</span>
+                  ) : me.myRank ? (
+                    <span>My rank: #{me.myRank}</span>
+                  ) : (
+                    <span>Public</span>
+                  )
                 ) : (
-                  <span>Public</span>
-                )
-              ) : (
-                <span>Join to set privacy</span>
-              )}
-            </div>
+                  <span>Join to set privacy</span>
+                )}
+              </div>
 
-            <div className="inline-flex rounded-lg border border-slate-300 overflow-hidden">
-              <button
-                className={`px-3 py-2 text-sm ${
-                  me?.state?.privacy === 'public'
-                    ? 'bg-slate-800 text-white'
-                    : 'bg-white text-slate-700'
-                }`}
-                onClick={() => onSetPrivacy('public')}
-                disabled={!me?.state || actionLoading}
-              >
-                Public
-              </button>
-              <button
-                className={`px-3 py-2 text-sm ${
-                  me?.state?.privacy === 'private'
-                    ? 'bg-slate-800 text-white'
-                    : 'bg-white text-slate-700'
-                }`}
-                onClick={() => onSetPrivacy('private')}
-                disabled={!me?.state || actionLoading}
-              >
-                Private
-              </button>
+              <div className="inline-flex rounded-lg border border-slate-300">
+                <button
+                  className={`px-3 py-2 text-sm ${
+                    me?.state?.privacy === 'public'
+                      ? 'bg-slate-800 text-white'
+                      : 'bg-white text-slate-700'
+                  }`}
+                  onClick={() => onSetPrivacy('public')}
+                  disabled={!me?.state || actionLoading}
+                >
+                  Public
+                </button>
+                <button
+                  className={`px-3 py-2 text-sm ${
+                    me?.state?.privacy === 'private'
+                      ? 'bg-slate-800 text-white'
+                      : 'bg-white text-slate-700'
+                  }`}
+                  onClick={() => onSetPrivacy('private')}
+                  disabled={!me?.state || actionLoading}
+                >
+                  Private
+                </button>
+              </div>
             </div>
           </div>
+
+          {shouldShowExpandButton && (
+            <div className="flex justify-center py-1">
+              <button
+                className="text-xs text-slate-600 underline hover:text-slate-800"
+                onClick={(event) => requestExpandedMode(event.nativeEvent, 'app')}
+              >
+                Expand
+              </button>
+            </div>
+          )}
+
+          {me?.state && (
+            <div
+              className={`rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-sm flex items-center justify-between ${
+                shouldEnableCardExpand ? 'cursor-pointer' : ''
+              }`}
+              onClick={
+                shouldEnableCardExpand
+                  ? (event) => requestExpandedMode(event.nativeEvent, 'app')
+                  : undefined
+              }
+            >
+              <div className="text-slate-500">Last check-in</div>
+              <div className="text-base font-semibold">
+                {formatUtcDay(me.state.lastCheckinDayUTC)}
+              </div>
+            </div>
+          )}
+
+          {isInlineMode && (
+            <div className="text-center text-[11px] text-slate-500">
+              Tip: Tap a card to expand.
+            </div>
+          )}
         </section>
 
-        <section className="bg-white rounded-xl p-5 border border-slate-200">
+        <section className="bg-white rounded-xl p-4 border border-slate-200">
           <h2 className="text-lg font-semibold mb-3">Leaderboard</h2>
           {leaderboard.length === 0 ? (
             <p className="text-slate-600 text-sm">No ranked users yet.</p>
           ) : (
-            <ol className="space-y-2">
+            <ol className="space-y-1.5">
               {leaderboard.map((entry, index) => (
                 <li
                   key={entry.userId}
-                  className="flex items-center justify-between rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
+                  className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
                 >
-                  <div className="flex items-center gap-3 min-w-0">
-                    <span className="w-6 text-sm font-semibold text-slate-500">
-                      #{index + 1}
+                  <div className="flex min-w-0 flex-1 items-center gap-2">
+                    <span className="w-7 shrink-0 text-left text-sm font-semibold text-slate-500">
+                      #{getCompetitionRankAtIndex(leaderboard, index)}
                     </span>
-                    <span className="truncate text-sm font-medium">
-                      {entry.displayName ?? entry.userId}
+                    <span className="min-w-0 flex-1 truncate whitespace-nowrap text-sm font-medium text-slate-900">
+                      {formatLeaderboardName(entry.displayName, entry.userId)}
                     </span>
                   </div>
-                  <div className="text-sm font-semibold">{entry.currentStreak}</div>
+                  <div className="min-w-8 shrink-0 text-right text-sm font-semibold tabular-nums">
+                    {entry.currentStreak}
+                  </div>
                 </li>
               ))}
             </ol>
           )}
         </section>
 
+        <section className="bg-white rounded-xl p-4 border border-slate-200">
+          <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-sm space-y-1">
+            <div className="font-semibold text-slate-800">📈 Stats</div>
+            <div className="text-slate-700">• Participants: {participantsTotal}</div>
+            <div className="text-slate-700">• Check-ins today (UTC): {checkinsToday}</div>
+            <div className="text-slate-700">• Total check-ins: {checkinsAllTime}</div>
+            <div className="text-slate-700">
+              • Longest streak: {longestStreakAllTime} days
+            </div>
+          </div>
+        </section>
+
         {me?.isModerator && (
-          <section className="bg-white rounded-xl p-5 border border-indigo-200 space-y-3">
-            <h2 className="text-lg font-semibold">Challenge Config (Moderator)</h2>
-            <p className="text-xs text-slate-500">Only one active tracker per subreddit.</p>
-            {config?.activePostId && (
-              <p className="text-sm text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
-                A streak tracker already exists. Open the existing tracker instead:{' '}
+          <section className="bg-white rounded-xl p-4 border border-slate-200 space-y-2">
+            <h2 className="text-base font-semibold">Setup / Admin</h2>
+            {config?.activePostId ? (
+              <p className="text-sm text-slate-700">
+                Active tracker post:{' '}
                 <a
                   className="underline font-medium"
                   href={`https://reddit.com/comments/${config.activePostId}`}
@@ -723,8 +1112,38 @@ const App = () => {
                 >
                   {config.activePostId}
                 </a>
+                . If this post is unpinned, engagement will drop.
+              </p>
+            ) : (
+              <p className="text-sm text-amber-700">
+                No active tracker post found. Create one to start.
               </p>
             )}
+            <p className="text-xs text-slate-600">
+              After posting, pin this tracker post in your subreddit.
+            </p>
+            <p className="text-xs text-slate-600">
+              Changing templates does not change streak rules (copy-only).
+            </p>
+            <p className="text-xs text-slate-600">
+              Do not delete the active post; it will break continuity.
+            </p>
+            <div className="pt-1">
+              <button
+                className="px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-sm font-medium"
+                onClick={onRepairTodayStats}
+                disabled={actionLoading}
+              >
+                Repair Today Stats
+              </button>
+            </div>
+          </section>
+        )}
+
+        {me?.isModerator && (
+          <section className="bg-white rounded-xl p-5 border border-indigo-200 space-y-3">
+            <h2 className="text-lg font-semibold">Challenge Config (Moderator)</h2>
+            <p className="text-xs text-slate-500">Only one active tracker per subreddit.</p>
             {configNeedsSetup && (
               <p className="text-sm text-indigo-700 bg-indigo-50 border border-indigo-200 rounded-lg px-3 py-2">
                 First-time setup: pick a template, adjust fields, and save before
@@ -806,6 +1225,17 @@ const App = () => {
                   disabled={actionLoading}
                 />
               </label>
+
+              <label className="flex items-center gap-2 text-sm text-slate-700">
+                <input
+                  type="checkbox"
+                  className="h-4 w-4"
+                  checked={configDevMode}
+                  onChange={(event) => setConfigDevMode(event.target.checked)}
+                  disabled={actionLoading}
+                />
+                Enable dev tools in production (mods only)
+              </label>
             </div>
 
             <div className="flex items-center gap-2">
@@ -832,11 +1262,11 @@ const App = () => {
           </section>
         )}
 
-        {me?.isModerator && devTime && (
+        {showDevToolsPanel && devTime && (
           <section className="bg-white rounded-xl p-5 border border-amber-200 space-y-3">
-            <h2 className="text-lg font-semibold">Dev Time Panel</h2>
+            <h2 className="text-lg font-semibold">UTC Reset Test Panel</h2>
             <p className="text-sm text-amber-700">
-              DEV ONLY: Simulates day changes for testing.
+              DEV ONLY: Simulates UTC time to stress reset boundaries.
             </p>
             {devNotice && (
               <p className="text-sm text-amber-800 bg-amber-100 border border-amber-300 rounded-lg px-3 py-2">
@@ -845,45 +1275,93 @@ const App = () => {
             )}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
               <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
+                <div className="text-slate-500">Simulated UTC</div>
+                <div className="text-sm font-semibold break-all">
+                  {devTime.simulatedUtcNow}
+                </div>
+              </div>
+              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
                 <div className="text-slate-500">UTC day now</div>
                 <div className="text-lg font-semibold">{devTime.utcDayNumberNow}</div>
               </div>
               <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
-                <div className="text-slate-500">Offset</div>
-                <div className="text-lg font-semibold">{devTime.devDayOffset}</div>
-              </div>
-              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
-                <div className="text-slate-500">Effective day</div>
-                <div className="text-lg font-semibold">
-                  {devTime.effectiveDayNumber}
-                </div>
+                <div className="text-slate-500">Seconds until reset</div>
+                <div className="text-lg font-semibold">{devTime.secondsUntilReset}s</div>
               </div>
             </div>
-            <div className="flex gap-2">
+            <div className="text-sm text-slate-600">
+              Offset: {devTime.devTimeOffsetSeconds}s
+            </div>
+            <div className="flex flex-wrap gap-2">
               <button
                 className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                onClick={() =>
-                  onAdjustDevDayOffset((devTime?.devDayOffset ?? 0) - 1)
-                }
+                onClick={() => onAdjustDevTimeOffset(10)}
                 disabled={actionLoading}
               >
-                -1 day
+                +10s
               </button>
               <button
                 className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                onClick={() =>
-                  onAdjustDevDayOffset((devTime?.devDayOffset ?? 0) + 1)
-                }
+                onClick={() => onAdjustDevTimeOffset(60)}
                 disabled={actionLoading}
               >
-                +1 day
+                +60s
               </button>
               <button
                 className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                onClick={() => onAdjustDevDayOffset(0)}
+                onClick={() => onAdjustDevTimeOffset(600)}
                 disabled={actionLoading}
               >
-                Reset to 0
+                +10m
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                onClick={() => onAdjustDevTimeOffset(3600)}
+                disabled={actionLoading}
+              >
+                +1h
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                onClick={() => onAdjustDevTimeOffset(82_800)}
+                disabled={actionLoading}
+              >
+                +23h
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                onClick={() => onAdjustDevTimeOffset(86_400)}
+                disabled={actionLoading}
+              >
+                +24h
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                onClick={() => onAdjustDevTimeOffset(90_000)}
+                disabled={actionLoading}
+              >
+                +25h
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                onClick={() => onSetDevTimeOffset(0)}
+                disabled={actionLoading}
+              >
+                Reset offset (0)
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-700 text-sm font-medium"
+                onClick={onRunBoundaryStress}
+                disabled={actionLoading}
+              >
+                Run Boundary Stress
+              </button>
+              <button
+                className="px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-sm font-medium"
+                onClick={onRepairTodayStats}
+                disabled={actionLoading}
+              >
+                Repair Today Stats
               </button>
               <button
                 className="px-3 py-2 rounded-lg border border-rose-300 bg-rose-50 text-rose-700 text-sm font-medium"
@@ -905,6 +1383,26 @@ const App = () => {
                 </button>
               )}
             </div>
+            {stressReports.length > 0 && (
+              <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-1 text-sm">
+                {stressReports.map((report, index) => (
+                  <div key={`${report.label}-${index}`} className="text-slate-700">
+                    {report.ok ? '✅' : '❌'} {report.label}
+                    {report.details ? ` (${report.details})` : ''}
+                  </div>
+                ))}
+              </div>
+            )}
+            {devStatsDebug && (
+              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 font-mono break-all">
+                utcDay={devStatsDebug.utcDayNumber} lastStatsDay={devStatsDebug.lastStatsDay}{' '}
+                participants={devStatsDebug.participantsTotal} checkinsToday=
+                {devStatsDebug.checkinsToday} checkinsAllTime=
+                {devStatsDebug.checkinsAllTime} longestStreak=
+                {devStatsDebug.longestStreakAllTime} todaySetSize=
+                {devStatsDebug.todaySetSize}
+              </div>
+            )}
           </section>
         )}
 

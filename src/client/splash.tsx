@@ -6,7 +6,7 @@ import { createRoot } from 'react-dom/client';
 
 export const Splash = () => {
   return (
-    <div className="flex relative flex-col justify-center items-center min-h-screen gap-4 px-6">
+    <div className="flex relative flex-col justify-center items-center gap-4 px-6">
       <h1 className="text-3xl font-bold text-center text-gray-900">Streak Club</h1>
       <p className="text-base text-center text-gray-700 max-w-md">
         Track daily check-ins, build streaks, and compete on the leaderboard.

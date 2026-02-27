@@ -3,23 +3,28 @@ import type { Context as HonoContext } from 'hono';
 import { context, reddit } from '@devvit/web/server';
 import {
   computeNextResetFromDayNumber,
-  computeNextResetUTC,
   ensureChallengeConfig,
   getChallengeConfig,
-  getDevDayOffset,
+  getDevTimeOffsetSeconds,
+  getUtcNow,
   getParticipantCount,
-  getTodayDayNumber,
   getChallengeStats,
   getLeaderboard,
+  getTodayCheckinsCount,
   getUserState,
   isConfigSetupRequired,
   joinChallenge,
+  checkActionRateLimit,
+  clearUserRateLimit,
   recordCheckIn,
+  repairTodayStats,
   resetChallengeProgress,
   setChallengeConfig,
-  setDevDayOffset,
+  setDevTimeOffsetSeconds,
+  storeUsername,
+  getStoredUsernames,
+  setUserState,
   setPrivacy,
-  utcDayNumber,
   type Privacy,
   type UserState,
 } from '../core/streak';
@@ -42,6 +47,7 @@ type ConfigRequest = {
   title?: string;
   description?: string;
   badgeThresholds?: number[];
+  devMode?: boolean;
   confirmTemplateChange?: boolean;
 };
 
@@ -58,10 +64,16 @@ type PrivacyRequest = {
 };
 
 type DevTimeRequest = {
-  devDayOffset?: number;
+  devTimeOffsetSeconds?: number;
 };
 
-type HttpStatus = 400 | 401 | 403 | 404 | 409 | 500;
+type DevStressReport = {
+  ok: boolean;
+  label: string;
+  details?: string;
+};
+
+type HttpStatus = 400 | 401 | 403 | 404 | 409 | 429 | 500;
 
 const jsonError = (
   c: HonoContext,
@@ -107,10 +119,12 @@ const jsonValidationError = (
 
 const isSortedUnique = (values: number[]): boolean => {
   for (let i = 0; i < values.length; i += 1) {
-    if (!Number.isInteger(values[i]) || values[i] <= 0) {
+    const current = values[i];
+    if (current === undefined || !Number.isInteger(current) || current <= 0) {
       return false;
     }
-    if (i > 0 && values[i] <= values[i - 1]) {
+    const previous = i > 0 ? values[i - 1] : undefined;
+    if (previous !== undefined && current <= previous) {
       return false;
     }
   }
@@ -161,12 +175,37 @@ const requireModerator = async (
   return { username };
 };
 
+const isDevModeEnabled = async (subredditId: string): Promise<boolean> => {
+  if (process.env.NODE_ENV !== 'production') {
+    return true;
+  }
+
+  const config = await getChallengeConfig(subredditId);
+  return config.devMode === true;
+};
+
+const requireDevToolsAccess = async (
+  subredditId: string,
+  subredditName: string
+): Promise<void> => {
+  await requireModerator(subredditName);
+  if (!(await isDevModeEnabled(subredditId))) {
+    throw new Error('DEV_MODE_DISABLED');
+  }
+};
+
+const logStress = (label: string, data: Record<string, unknown>): void => {
+  // Useful for investigating boundary failures in dev runs.
+  console.log(`[utc-stress] ${label}`, JSON.stringify(data));
+};
+
 export const api = new Hono();
 
 api.get('/config', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
-    const today = await getTodayDayNumber(subredditId);
+    const utcNow = await getUtcNow(subredditId);
+    const today = utcNow.utcDayNumber;
     const config = await getChallengeConfig(subredditId);
     const stats = await getChallengeStats(subredditId, today);
     const configNeedsSetup = isConfigSetupRequired(config);
@@ -299,6 +338,7 @@ api.post('/config', async (c) => {
       title,
       description,
       badgeThresholds,
+      devMode: body.devMode ?? existingConfig.devMode,
     });
 
     return c.json({
@@ -315,6 +355,22 @@ api.post('/join', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
     const userId = requireUserId();
+    await storeUsername(subredditId, userId, context.username);
+    const utcNow = await getUtcNow(subredditId);
+    const joinRateLimit = await checkActionRateLimit(
+      subredditId,
+      userId,
+      'join',
+      utcNow.utcMs
+    );
+    if (!joinRateLimit.allowed) {
+      return jsonError(
+        c,
+        429,
+        'JOIN_RATE_LIMITED',
+        `Please wait ${Math.ceil(joinRateLimit.retryAfterMs / 1000)}s before trying to join again.`
+      );
+    }
 
     await ensureChallengeConfig(subredditId);
     const state = await joinChallenge(subredditId, userId, 'public');
@@ -371,10 +427,26 @@ api.post('/checkin', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
     const userId = requireUserId();
+    await storeUsername(subredditId, userId, context.username);
 
     await ensureChallengeConfig(subredditId);
 
-    const today = await getTodayDayNumber(subredditId);
+    const utcNow = await getUtcNow(subredditId);
+    const checkinRateLimit = await checkActionRateLimit(
+      subredditId,
+      userId,
+      'checkin',
+      utcNow.utcMs
+    );
+    if (!checkinRateLimit.allowed) {
+      return jsonError(
+        c,
+        429,
+        'CHECKIN_RATE_LIMITED',
+        `Please wait ${Math.ceil(checkinRateLimit.retryAfterMs / 1000)}s before trying again.`
+      );
+    }
+    const today = utcNow.utcDayNumber;
     const state = await getUserState(subredditId, userId);
 
     if (!state) {
@@ -417,9 +489,13 @@ api.post('/checkin', async (c) => {
 
     return c.json({
       status: 'ok',
-      state: savedState,
+      state: savedState.state,
       checkedInToday: true,
-      nextResetUtcTimestamp: computeNextResetUTC(new Date()),
+      nextResetUtcTimestamp: computeNextResetFromDayNumber(today),
+      usedFreeze: savedState.metadata.usedFreeze,
+      earnedFreeze: savedState.metadata.earnedFreeze,
+      tokenCount: savedState.metadata.tokenCount,
+      earnedBadge: savedState.metadata.earnedBadge,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -433,8 +509,8 @@ api.get('/me', async (c) => {
     const userId = requireUserId();
 
     const state = await getUserState(subredditId, userId);
-    const now = new Date();
-    const today = await getTodayDayNumber(subredditId, now);
+    const utcNow = await getUtcNow(subredditId);
+    const today = utcNow.utcDayNumber;
     const username = context.username;
     const moderator =
       typeof username === 'string' && username.length > 0
@@ -453,7 +529,7 @@ api.get('/me', async (c) => {
       state,
       checkedInToday: checkedInToday(state, today),
       canCheckInToday: canCheckInToday(state, today),
-      nextResetUtcTimestamp: computeNextResetUTC(now),
+      nextResetUtcTimestamp: computeNextResetFromDayNumber(today),
       myRank,
       isModerator: moderator,
     });
@@ -465,20 +541,45 @@ api.get('/me', async (c) => {
 
 api.get('/dev/time', async (c) => {
   try {
-    const { subredditId } = requireSubredditContext();
-    const now = new Date();
-    const utcDayNumberNow = utcDayNumber(now);
-    const devDayOffset = await getDevDayOffset(subredditId);
-    const effectiveDayNumber = await getTodayDayNumber(subredditId, now);
+    const { subredditId, subredditName } = requireSubredditContext();
+    try {
+      await requireDevToolsAccess(subredditId, subredditName);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
+        return jsonError(
+          c,
+          401,
+          'AUTH_REQUIRED',
+          'You must be logged in to view dev time settings'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can view dev time settings'
+        );
+      }
+      if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
+        return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
+      }
+      throw error;
+    }
+    const utcNow = await getUtcNow(subredditId);
+    const devTimeOffsetSeconds = await getDevTimeOffsetSeconds(subredditId);
+    const simulatedNow = new Date(utcNow.utcMs);
 
     return c.json({
       status: 'ok',
       note: 'DEV ONLY: Simulates day changes for testing.',
-      serverUtcNow: now.toISOString(),
-      utcDayNumberNow,
-      devDayOffset,
-      effectiveDayNumber,
-      nextResetUtcMs: computeNextResetFromDayNumber(effectiveDayNumber),
+      serverUtcNow: new Date().toISOString(),
+      simulatedUtcNow: simulatedNow.toISOString(),
+      utcDayNumberNow: utcNow.utcDayNumber,
+      effectiveDayNumber: utcNow.utcDayNumber,
+      devTimeOffsetSeconds,
+      nextResetUtcMs: computeNextResetFromDayNumber(utcNow.utcDayNumber),
+      secondsUntilReset: utcNow.secondsUntilReset,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -490,7 +591,7 @@ api.post('/dev/time', async (c) => {
   try {
     const { subredditId, subredditName } = requireSubredditContext();
     try {
-      await requireModerator(subredditName);
+      await requireDevToolsAccess(subredditId, subredditName);
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -508,34 +609,44 @@ api.post('/dev/time', async (c) => {
           'Only moderators can update dev time settings'
         );
       }
+      if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
+        return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
+      }
       throw error;
     }
 
     const body = await c.req
       .json<DevTimeRequest>()
       .catch(() => ({} as DevTimeRequest));
-    if (typeof body.devDayOffset !== 'number' || !Number.isInteger(body.devDayOffset)) {
+    if (
+      typeof body.devTimeOffsetSeconds !== 'number' ||
+      !Number.isInteger(body.devTimeOffsetSeconds)
+    ) {
       return jsonError(
         c,
         400,
-        'INVALID_DEV_DAY_OFFSET',
-        'devDayOffset must be an integer'
+        'INVALID_DEV_TIME_OFFSET',
+        'devTimeOffsetSeconds must be an integer'
       );
     }
 
-    const devDayOffset = await setDevDayOffset(subredditId, body.devDayOffset);
-    const now = new Date();
-    const utcDayNumberNow = utcDayNumber(now);
-    const effectiveDayNumber = await getTodayDayNumber(subredditId, now);
+    const devTimeOffsetSeconds = await setDevTimeOffsetSeconds(
+      subredditId,
+      body.devTimeOffsetSeconds
+    );
+    const utcNow = await getUtcNow(subredditId);
+    const simulatedNow = new Date(utcNow.utcMs);
 
     return c.json({
       status: 'ok',
       note: 'DEV ONLY: Simulates day changes for testing.',
-      serverUtcNow: now.toISOString(),
-      utcDayNumberNow,
-      devDayOffset,
-      effectiveDayNumber,
-      nextResetUtcMs: computeNextResetFromDayNumber(effectiveDayNumber),
+      serverUtcNow: new Date().toISOString(),
+      simulatedUtcNow: simulatedNow.toISOString(),
+      utcDayNumberNow: utcNow.utcDayNumber,
+      effectiveDayNumber: utcNow.utcDayNumber,
+      devTimeOffsetSeconds,
+      nextResetUtcMs: computeNextResetFromDayNumber(utcNow.utcDayNumber),
+      secondsUntilReset: utcNow.secondsUntilReset,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -546,8 +657,9 @@ api.post('/dev/time', async (c) => {
 api.post('/dev/reset', async (c) => {
   try {
     const { subredditId, subredditName } = requireSubredditContext();
+    const userId = requireUserId();
     try {
-      await requireModerator(subredditName);
+      await requireDevToolsAccess(subredditId, subredditName);
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -565,28 +677,349 @@ api.post('/dev/reset', async (c) => {
           'Only moderators can reset dev test data'
         );
       }
+      if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
+        return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
+      }
       throw error;
     }
 
     const { stateGeneration } = await resetChallengeProgress(subredditId);
-    const now = new Date();
-    const utcDayNumberNow = utcDayNumber(now);
-    const devDayOffset = await getDevDayOffset(subredditId);
-    const effectiveDayNumber = await getTodayDayNumber(subredditId, now);
+    await clearUserRateLimit(subredditId, userId);
+    const utcNow = await getUtcNow(subredditId);
+    const simulatedNow = new Date(utcNow.utcMs);
+    const devTimeOffsetSeconds = await getDevTimeOffsetSeconds(subredditId);
 
     return c.json({
       status: 'ok',
       note: 'DEV ONLY: Challenge progress reset for this subreddit.',
       stateGeneration,
-      serverUtcNow: now.toISOString(),
-      utcDayNumberNow,
-      devDayOffset,
-      effectiveDayNumber,
-      nextResetUtcMs: computeNextResetFromDayNumber(effectiveDayNumber),
+      serverUtcNow: new Date().toISOString(),
+      simulatedUtcNow: simulatedNow.toISOString(),
+      utcDayNumberNow: utcNow.utcDayNumber,
+      effectiveDayNumber: utcNow.utcDayNumber,
+      devTimeOffsetSeconds,
+      nextResetUtcMs: computeNextResetFromDayNumber(utcNow.utcDayNumber),
+      secondsUntilReset: utcNow.secondsUntilReset,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return jsonError(c, 400, 'DEV_RESET_FAILED', message);
+  }
+});
+
+api.post('/dev/stress', async (c) => {
+  try {
+    const { subredditId, subredditName } = requireSubredditContext();
+    try {
+      await requireDevToolsAccess(subredditId, subredditName);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
+        return jsonError(
+          c,
+          401,
+          'AUTH_REQUIRED',
+          'You must be logged in to run UTC reset stress tests'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can run UTC reset stress tests'
+        );
+      }
+      if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
+        return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
+      }
+      throw error;
+    }
+
+    const reports: DevStressReport[] = [];
+    const assertStep = (ok: boolean, label: string, details?: string): void => {
+      reports.push({ ok, label, details });
+    };
+    const currentOffset = async (): Promise<number> =>
+      await getDevTimeOffsetSeconds(subredditId);
+    const setOffset = async (seconds: number): Promise<void> => {
+      await setDevTimeOffsetSeconds(subredditId, seconds);
+    };
+    const shiftOffset = async (deltaSeconds: number): Promise<void> => {
+      const nowOffset = await currentOffset();
+      await setOffset(nowOffset + deltaSeconds);
+    };
+    const alignSecondsUntilReset = async (targetSeconds: number): Promise<void> => {
+      const utcNow = await getUtcNow(subredditId);
+      const nowOffset = await currentOffset();
+      const delta = utcNow.secondsUntilReset - targetSeconds;
+      await setOffset(nowOffset + delta);
+    };
+
+    const runnerId = requireUserId();
+    const userA = `${runnerId}:devstress:A`;
+    const userB = `${runnerId}:devstress:B`;
+    const userC = `${runnerId}:devstress:C`;
+    const userD = `${runnerId}:devstress:D`;
+
+    const originalOffset = await currentOffset();
+    try {
+      // Scenario A
+      await alignSecondsUntilReset(30);
+      let utcNow = await getUtcNow(subredditId);
+      const dayA = utcNow.utcDayNumber;
+      await joinChallenge(subredditId, userA, 'private');
+      const resultA1 = await recordCheckIn(subredditId, userA, dayA);
+      assertStep(
+        resultA1 !== null && resultA1.state.lastCheckinDayUTC === dayA,
+        'A1 check-in before reset succeeded'
+      );
+      logStress('A1', { dayA, utcDay: utcNow.utcDayNumber, secondsUntilReset: utcNow.secondsUntilReset });
+
+      await shiftOffset(40);
+      utcNow = await getUtcNow(subredditId);
+      const stateAAfter = await getUserState(subredditId, userA);
+      const checkedInAfterReset =
+        stateAAfter?.lastCheckinDayUTC === utcNow.utcDayNumber;
+      assertStep(!checkedInAfterReset, 'A2 rollover resets checked-in-today state');
+      const statsA = await getChallengeStats(subredditId, utcNow.utcDayNumber);
+      assertStep(
+        statsA.lastStatsDay === utcNow.utcDayNumber,
+        'A3 stats day rolled over',
+        `statsDay=${statsA.lastStatsDay}, utcDay=${utcNow.utcDayNumber}`
+      );
+      assertStep(
+        utcNow.secondsUntilReset > 0 && utcNow.secondsUntilReset <= 86_400,
+        'A4 countdown reset is valid',
+        `secondsUntilReset=${utcNow.secondsUntilReset}`
+      );
+      logStress('A2', {
+        utcDay: utcNow.utcDayNumber,
+        secondsUntilReset: utcNow.secondsUntilReset,
+        lastCheckinDayUTC: stateAAfter?.lastCheckinDayUTC,
+        statsDay: statsA.lastStatsDay,
+      });
+
+      // Scenario B
+      await alignSecondsUntilReset(20);
+      utcNow = await getUtcNow(subredditId);
+      await joinChallenge(subredditId, userB, 'private');
+      const dayB0 = utcNow.utcDayNumber;
+      const bBefore = await recordCheckIn(subredditId, userA, dayB0);
+      assertStep(bBefore !== null, 'B1 user A check-in before boundary succeeded');
+      await shiftOffset(30);
+      utcNow = await getUtcNow(subredditId);
+      const dayB1 = utcNow.utcDayNumber;
+      const statsBaseline = await getChallengeStats(subredditId, dayB1);
+      const bAAfterReset = await recordCheckIn(subredditId, userA, dayB1);
+      const bBAfterReset = await recordCheckIn(subredditId, userB, dayB1);
+      assertStep(
+        bAAfterReset !== null && bBAfterReset !== null,
+        'B2 user A and user B check-ins after reset succeeded'
+      );
+      const statsAfterB = await getChallengeStats(subredditId, dayB1);
+      assertStep(
+        statsAfterB.checkinsToday === statsBaseline.checkinsToday + 2,
+        'B3 checkinsToday reset and incremented for new day',
+        `before=${statsBaseline.checkinsToday}, after=${statsAfterB.checkinsToday}`
+      );
+      const statsBeforeDuplicate = await getChallengeStats(subredditId, dayB1);
+      let duplicateBlocked = false;
+      try {
+        await recordCheckIn(subredditId, userA, dayB1);
+      } catch {
+        duplicateBlocked = true;
+      }
+      const statsAfterDuplicate = await getChallengeStats(subredditId, dayB1);
+      assertStep(
+        duplicateBlocked &&
+          statsBeforeDuplicate.checkinsToday === statsAfterDuplicate.checkinsToday,
+        'B4 no double-count for same user same day'
+      );
+      logStress('B', {
+        dayBefore: dayB0,
+        dayAfter: dayB1,
+        checkinsTodayBefore: statsBaseline.checkinsToday,
+        checkinsTodayAfter: statsAfterB.checkinsToday,
+      });
+
+      // Scenario C
+      utcNow = await getUtcNow(subredditId);
+      const dayC = utcNow.utcDayNumber;
+      await joinChallenge(subredditId, userC, 'private');
+      await setUserState(subredditId, userC, {
+        joinedAt: new Date(utcNow.utcMs).toISOString(),
+        privacy: 'private',
+        currentStreak: 5,
+        bestStreak: 6,
+        streakStartDayUTC: dayC - 5,
+        lastCheckinDayUTC: dayC - 2,
+        freezeTokens: 1,
+        freezeSaves: 0,
+        badges: [],
+        isParticipant: true,
+      });
+      const cResult = await recordCheckIn(subredditId, userC, dayC);
+      const cStateAfter = await getUserState(subredditId, userC);
+      assertStep(
+        cResult !== null &&
+          cResult.metadata.usedFreeze &&
+          cStateAfter?.freezeTokens === 0,
+        'C1 freeze consumed and streak preserved'
+      );
+      await shiftOffset(86_410);
+      const cAfterMidnight = await getUtcNow(subredditId);
+      const cStateNextDay = await getUserState(subredditId, userC);
+      assertStep(
+        cStateNextDay?.lastCheckinDayUTC !== cAfterMidnight.utcDayNumber,
+        'C2 post-rollover gating remains correct'
+      );
+      logStress('C', {
+        dayBefore: dayC,
+        dayAfter: cAfterMidnight.utcDayNumber,
+        usedFreeze: cResult?.metadata.usedFreeze,
+        freezeTokensAfter: cStateAfter?.freezeTokens,
+      });
+
+      // Scenario D
+      await alignSecondsUntilReset(10);
+      utcNow = await getUtcNow(subredditId);
+      const dayD0 = utcNow.utcDayNumber;
+      await joinChallenge(subredditId, userD, 'private');
+      await setUserState(subredditId, userD, {
+        joinedAt: new Date(utcNow.utcMs).toISOString(),
+        privacy: 'private',
+        currentStreak: 6,
+        bestStreak: 6,
+        streakStartDayUTC: dayD0 - 6,
+        lastCheckinDayUTC: dayD0 - 1,
+        freezeTokens: 0,
+        freezeSaves: 0,
+        badges: [],
+        isParticipant: true,
+      });
+      const dFirst = await recordCheckIn(subredditId, userD, dayD0);
+      assertStep(
+        dFirst?.metadata.earnedBadge === 'Committed',
+        'D1 badge awarded at 7 exactly once'
+      );
+      await shiftOffset(20);
+      utcNow = await getUtcNow(subredditId);
+      const dayD1 = utcNow.utcDayNumber;
+      const dSecond = await recordCheckIn(subredditId, userD, dayD1);
+      const dState = await getUserState(subredditId, userD);
+      const committedCount =
+        dState?.badges.filter((badge) => badge === 'Committed').length ?? 0;
+      assertStep(
+        dSecond?.metadata.earnedBadge === null && committedCount === 1,
+        'D2 badge not duplicated after rollover check-in',
+        `earnedBadge=${String(dSecond?.metadata.earnedBadge)}, committedCount=${committedCount}`
+      );
+      logStress('D', {
+        dayBefore: dayD0,
+        dayAfter: dayD1,
+        firstEarnedBadge: dFirst?.metadata.earnedBadge,
+        secondEarnedBadge: dSecond?.metadata.earnedBadge,
+      });
+    } finally {
+      await setOffset(originalOffset);
+    }
+
+    return c.json({
+      status: 'ok',
+      reports,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return jsonError(c, 400, 'DEV_STRESS_FAILED', message);
+  }
+});
+
+api.post('/dev/stats/repair', async (c) => {
+  try {
+    const { subredditId, subredditName } = requireSubredditContext();
+    try {
+      await requireModerator(subredditName);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
+        return jsonError(
+          c,
+          401,
+          'AUTH_REQUIRED',
+          'You must be logged in to repair stats'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can repair stats'
+        );
+      }
+      throw error;
+    }
+
+    const utcNow = await getUtcNow(subredditId);
+    const repair = await repairTodayStats(subredditId, utcNow.utcDayNumber);
+
+    return c.json({
+      status: 'ok',
+      utcDayNumber: utcNow.utcDayNumber,
+      oldCheckinsToday: repair.oldStats.checkinsToday,
+      newCheckinsToday: repair.newStats.checkinsToday,
+      todaySetSize: repair.todaySetSize,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return jsonError(c, 400, 'DEV_STATS_REPAIR_FAILED', message);
+  }
+});
+
+api.get('/dev/stats/debug', async (c) => {
+  try {
+    const { subredditId, subredditName } = requireSubredditContext();
+    try {
+      await requireDevToolsAccess(subredditId, subredditName);
+    } catch (error) {
+      if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
+        return jsonError(
+          c,
+          401,
+          'AUTH_REQUIRED',
+          'You must be logged in to view stats debug snapshot'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can view stats debug snapshot'
+        );
+      }
+      if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
+        return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
+      }
+      throw error;
+    }
+
+    const utcNow = await getUtcNow(subredditId);
+    const stats = await getChallengeStats(subredditId, utcNow.utcDayNumber);
+    const todaySetSize = await getTodayCheckinsCount(subredditId, utcNow.utcDayNumber);
+
+    return c.json({
+      status: 'ok',
+      utcDayNumber: utcNow.utcDayNumber,
+      lastStatsDay: stats.lastStatsDay,
+      participantsTotal: stats.participantsTotal,
+      checkinsToday: stats.checkinsToday,
+      checkinsAllTime: stats.checkinsAllTime,
+      longestStreakAllTime: stats.longestStreakAllTime,
+      todaySetSize,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return jsonError(c, 400, 'DEV_STATS_DEBUG_FAILED', message);
   }
 });
 
@@ -601,13 +1034,19 @@ api.get('/leaderboard', async (c) => {
         : Math.min(parsedLimit, 100);
 
     const rows = await getLeaderboard(subredditId, limit);
+    const storedUsernames = await getStoredUsernames(subredditId);
 
     const users = await Promise.all(
       rows.map(async (row) => {
-        const user = await reddit.getUserById(row.userId as `t2_${string}`);
+        const storedUsername = storedUsernames[row.userId];
+        let resolvedName = storedUsername;
+        if (!resolvedName) {
+          const user = await reddit.getUserById(row.userId as `t2_${string}`);
+          resolvedName = user?.displayName ?? user?.username;
+        }
         return {
           userId: row.userId,
-          displayName: user?.displayName ?? user?.username,
+          displayName: resolvedName,
           currentStreak: row.currentStreak,
           streakStartDayUTC: row.streakStartDayUTC,
         };

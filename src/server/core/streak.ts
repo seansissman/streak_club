@@ -4,11 +4,30 @@ import {
   isTemplateId,
   type TemplateId,
 } from './templates';
+import {
+  applyAggregateStatsMutation,
+  applyCheckinStatsUpdate,
+  parseAggregateStatsRecord,
+  serializeAggregateStatsRecord,
+  type AggregateStats,
+  type AggregateStatsMutation,
+} from './stats';
+import { evaluateActionThrottle, type RateLimitDecision } from './rate_limit';
 
 const MILLISECONDS_PER_DAY = 86_400_000;
 const UTC_TIMEZONE = 'UTC';
 const UNSET_DAY = '-1';
 const STATE_GENERATION_FIELD = 'stateGeneration';
+const TODAY_SET_RETENTION_DAYS = 30;
+const MAX_FREEZE_TOKENS = 2;
+const BADGE_MILESTONES: Array<{ streak: number; badge: string }> = [
+  { streak: 7, badge: 'Committed' },
+  { streak: 30, badge: 'Consistent' },
+  { streak: 90, badge: 'Disciplined' },
+  { streak: 180, badge: 'Unstoppable' },
+  { streak: 365, badge: 'Legend' },
+];
+const BADGE_NAMES = BADGE_MILESTONES.map((entry) => entry.badge);
 
 export type Privacy = 'public' | 'private';
 
@@ -18,6 +37,7 @@ export type ChallengeConfig = {
   description: string;
   timezone: 'UTC';
   badgeThresholds: number[];
+  devMode: boolean;
   activePostId: string | null;
   updatedAt: number;
   createdAt: number;
@@ -28,6 +48,7 @@ export type ChallengeConfigUpdate = {
   title?: string;
   description?: string;
   badgeThresholds?: number[];
+  devMode?: boolean;
   activePostId?: string | null;
 };
 
@@ -38,20 +59,34 @@ export type UserState = {
   bestStreak: number;
   streakStartDayUTC: number | null;
   lastCheckinDayUTC: number | null;
+  freezeTokens: number;
+  freezeSaves: number;
+  badges: string[];
+  isParticipant: boolean;
+};
+
+export type CheckInMetadata = {
+  usedFreeze: boolean;
+  earnedFreeze: boolean;
+  tokenCount: number;
+  earnedBadge: string | null;
+};
+
+export type CheckInResult = {
+  state: UserState;
+  metadata: CheckInMetadata;
 };
 
 export type LeaderboardEntry = {
   userId: string;
   currentStreak: number;
   bestStreak: number;
+  streakAchievedDayUTC: number | null;
   streakStartDayUTC: number | null;
   lastCheckinDayUTC: number | null;
 };
 
-export type ChallengeStats = {
-  participantsCount: number;
-  checkedInTodayCount: number;
-};
+export type ChallengeStats = AggregateStats;
 
 export const keys = {
   challengeConfig: (subredditId: string): string => `cfg:${subredditId}`,
@@ -59,8 +94,43 @@ export const keys = {
     `user:${subredditId}:${userId}`,
   participants: (subredditId: string): string => `participants:${subredditId}`,
   leaderboard: (subredditId: string): string => `lb:${subredditId}`,
+  usernames: (subredditId: string): string => `names:${subredditId}`,
   challengeStats: (subredditId: string): string => `stats:${subredditId}`,
+  todayCheckins: (subredditId: string, utcDayNumber: number): string =>
+    `today:${subredditId}:${String(utcDayNumber)}`,
+  rateLimit: (subredditId: string, userId: string): string =>
+    `rl:${subredditId}:${userId}`,
   devSettings: (subredditId: string): string => `dev:${subredditId}`,
+};
+
+const updateChallengeStats = async (
+  subredditId: string,
+  todayDay: number,
+  mutation: AggregateStatsMutation
+): Promise<ChallengeStats> => {
+  const statsKey = keys.challengeStats(subredditId);
+  const stored = await redis.hGetAll(statsKey);
+  const existing = parseAggregateStatsRecord(stored, todayDay);
+  const updated = applyAggregateStatsMutation(existing, todayDay, mutation);
+  await redis.hSet(statsKey, serializeAggregateStatsRecord(updated));
+  return updated;
+};
+
+const syncChallengeStatsCheckinsToday = async (
+  subredditId: string,
+  day: number
+): Promise<ChallengeStats> => {
+  const statsKey = keys.challengeStats(subredditId);
+  const stored = await redis.hGetAll(statsKey);
+  const parsed = parseAggregateStatsRecord(stored, day);
+  const todaySetSize = await redis.hLen(keys.todayCheckins(subredditId, day));
+  const synced = {
+    ...parsed,
+    lastStatsDay: day,
+    checkinsToday: todaySetSize,
+  };
+  await redis.hSet(statsKey, serializeAggregateStatsRecord(synced));
+  return synced;
 };
 
 const toDayStorage = (day: number | null): string =>
@@ -140,6 +210,34 @@ const parseBadgeThresholds = (raw: string | undefined): number[] | null => {
   }
 };
 
+const parseBadges = (raw: string | undefined): string[] => {
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    const uniqueBadges = Array.from(
+      new Set(
+        parsed.filter(
+          (value): value is string =>
+            typeof value === 'string' && BADGE_NAMES.includes(value)
+        )
+      )
+    );
+
+    return BADGE_MILESTONES
+      .map((entry) => entry.badge)
+      .filter((badge) => uniqueBadges.includes(badge));
+  } catch {
+    return [];
+  }
+};
+
 const serializeUserState = (
   state: UserState,
   stateGeneration: number
@@ -150,6 +248,10 @@ const serializeUserState = (
   bestStreak: String(state.bestStreak),
   streakStartDayUTC: toDayStorage(state.streakStartDayUTC),
   lastCheckinDayUTC: toDayStorage(state.lastCheckinDayUTC),
+  freezeTokens: String(state.freezeTokens),
+  freezeSaves: String(state.freezeSaves),
+  badges: JSON.stringify(state.badges),
+  isParticipant: state.isParticipant ? '1' : '0',
   [STATE_GENERATION_FIELD]: String(stateGeneration),
 });
 
@@ -173,6 +275,13 @@ const deserializeUserState = (
     bestStreak: parseNonNegativeInt(data.bestStreak),
     streakStartDayUTC: fromDayStorage(data.streakStartDayUTC),
     lastCheckinDayUTC: fromDayStorage(data.lastCheckinDayUTC),
+    freezeTokens: Math.min(
+      parseNonNegativeInt(data.freezeTokens),
+      MAX_FREEZE_TOKENS
+    ),
+    freezeSaves: parseNonNegativeInt(data.freezeSaves),
+    badges: parseBadges(data.badges),
+    isParticipant: data.isParticipant !== '0',
   };
 };
 
@@ -188,14 +297,38 @@ export const applyDevDayOffset = (dayNumber: number, devDayOffset: number): numb
 export const computeNextResetFromDayNumber = (dayNumber: number): number =>
   (dayNumber + 1) * MILLISECONDS_PER_DAY;
 
-export const getDevDayOffset = async (subredditId: string): Promise<number> => {
-  const offset = await redis.hGet(keys.devSettings(subredditId), 'devDayOffset');
+export type UtcNowSnapshot = {
+  utcMs: number;
+  utcDayNumber: number;
+  secondsUntilReset: number;
+};
+
+export const getDevTimeOffsetSeconds = async (
+  subredditId: string
+): Promise<number> => {
+  const offset = await redis.hGet(keys.devSettings(subredditId), 'devTimeOffsetSeconds');
   if (!offset) {
     return 0;
   }
 
   const parsed = Number.parseInt(offset, 10);
   return Number.isNaN(parsed) ? 0 : parsed;
+};
+
+export const getDevDayOffset = async (subredditId: string): Promise<number> => {
+  const offsetSeconds = await getDevTimeOffsetSeconds(subredditId);
+  return Math.trunc(offsetSeconds / 86_400);
+};
+
+export const setDevTimeOffsetSeconds = async (
+  subredditId: string,
+  devTimeOffsetSeconds: number
+): Promise<number> => {
+  await redis.hSet(keys.devSettings(subredditId), {
+    devTimeOffsetSeconds: String(devTimeOffsetSeconds),
+    devDayOffset: String(Math.trunc(devTimeOffsetSeconds / 86_400)),
+  });
+  return devTimeOffsetSeconds;
 };
 
 const getStateGeneration = async (subredditId: string): Promise<number> => {
@@ -212,19 +345,43 @@ export const setDevDayOffset = async (
   subredditId: string,
   devDayOffset: number
 ): Promise<number> => {
-  await redis.hSet(keys.devSettings(subredditId), {
-    devDayOffset: String(devDayOffset),
-  });
+  await setDevTimeOffsetSeconds(subredditId, devDayOffset * 86_400);
   return devDayOffset;
+};
+
+export const getUtcNowFromBaseMs = (
+  baseUtcMs: number,
+  devTimeOffsetSeconds: number
+): UtcNowSnapshot => {
+  const utcMs = baseUtcMs + devTimeOffsetSeconds * 1000;
+  const day = Math.floor(utcMs / MILLISECONDS_PER_DAY);
+  const nextResetUtcMs = computeNextResetFromDayNumber(day);
+  const secondsUntilReset = Math.max(
+    0,
+    Math.floor((nextResetUtcMs - utcMs) / 1000)
+  );
+
+  return {
+    utcMs,
+    utcDayNumber: day,
+    secondsUntilReset,
+  };
+};
+
+export const getUtcNow = async (
+  subredditId: string,
+  now: Date = new Date()
+): Promise<UtcNowSnapshot> => {
+  const offsetSeconds = await getDevTimeOffsetSeconds(subredditId);
+  return getUtcNowFromBaseMs(now.getTime(), offsetSeconds);
 };
 
 export const getTodayDayNumber = async (
   subredditId: string,
   now: Date = new Date()
 ): Promise<number> => {
-  const baseDayNumber = utcDayNumber(now);
-  const devDayOffset = await getDevDayOffset(subredditId);
-  return applyDevDayOffset(baseDayNumber, devDayOffset);
+  const utcNow = await getUtcNow(subredditId, now);
+  return utcNow.utcDayNumber;
 };
 
 export const canCheckIn = (userState: UserState, day: number): boolean => {
@@ -237,26 +394,74 @@ export const canCheckIn = (userState: UserState, day: number): boolean => {
 };
 
 export const applyCheckIn = (userState: UserState, day: number): UserState => {
+  return applyCheckInWithMetadata(userState, day).state;
+};
+
+export const applyCheckInWithMetadata = (
+  userState: UserState,
+  day: number
+): CheckInResult => {
   if (!canCheckIn(userState, day)) {
     throw new Error('User has already checked in for this UTC day');
   }
 
   const last = userState.lastCheckinDayUTC;
-  const isConsecutiveDay =
-    last !== null &&
-    day === last + 1 &&
-    userState.streakStartDayUTC !== null;
+  const missedDays = last === null ? 0 : day - last;
+  let usedFreeze = false;
+  let freezeTokens = userState.freezeTokens;
+  let freezeSaves = userState.freezeSaves;
 
-  const currentStreak = isConsecutiveDay ? userState.currentStreak + 1 : 1;
-  const streakStartDayUTC = isConsecutiveDay ? userState.streakStartDayUTC : day;
+  const canContinueWithFreeze = missedDays === 2 && freezeTokens > 0;
+  if (canContinueWithFreeze) {
+    usedFreeze = true;
+    freezeTokens -= 1;
+    freezeSaves += 1;
+  }
+
+  const isConsecutiveDay = missedDays === 1;
+  const isContinuation = isConsecutiveDay || canContinueWithFreeze;
+  const hasTrackableStreak =
+    userState.streakStartDayUTC !== null && userState.currentStreak > 0;
+
+  const currentStreak =
+    isContinuation && hasTrackableStreak ? userState.currentStreak + 1 : 1;
+  const streakStartDayUTC =
+    isContinuation && hasTrackableStreak ? userState.streakStartDayUTC : day;
   const bestStreak = Math.max(userState.bestStreak, currentStreak);
+  let earnedFreeze = false;
 
-  return {
+  if (currentStreak % 7 === 0 && freezeTokens < MAX_FREEZE_TOKENS) {
+    freezeTokens += 1;
+    earnedFreeze = true;
+  }
+  const milestoneBadge =
+    BADGE_MILESTONES.find((entry) => entry.streak === currentStreak)?.badge ?? null;
+  const earnedBadge =
+    milestoneBadge && !userState.badges.includes(milestoneBadge)
+      ? milestoneBadge
+      : null;
+  const badges =
+    earnedBadge === null ? userState.badges : [...userState.badges, earnedBadge];
+
+  const updated: UserState = {
     ...userState,
     currentStreak,
     bestStreak,
     streakStartDayUTC,
     lastCheckinDayUTC: day,
+    freezeTokens,
+    freezeSaves,
+    badges,
+  };
+
+  return {
+    state: updated,
+    metadata: {
+      usedFreeze,
+      earnedFreeze,
+      tokenCount: freezeTokens,
+      earnedBadge,
+    },
   };
 };
 
@@ -268,6 +473,7 @@ const serializeChallengeConfig = (
   description: config.description,
   timezone: config.timezone,
   badgeThresholds: JSON.stringify(config.badgeThresholds),
+  devMode: config.devMode ? '1' : '0',
   activePostId: config.activePostId ?? '',
   updatedAt: String(config.updatedAt),
   createdAt: String(config.createdAt),
@@ -278,6 +484,7 @@ const defaultChallengeConfig = (now: number = Date.now()): ChallengeConfig => {
   return {
     ...templateConfig,
     timezone: UTC_TIMEZONE,
+    devMode: false,
     activePostId: null,
     updatedAt: now,
     createdAt: now,
@@ -312,6 +519,7 @@ const deserializeChallengeConfig = (
   const parsedThresholds = parseBadgeThresholds(data.badgeThresholds);
   const createdAt = parseTimestamp(data.createdAt, fallbackNow);
   const updatedAt = parseTimestamp(data.updatedAt, createdAt);
+  const activePostIdRaw = data.activePostId;
 
   return {
     templateId,
@@ -319,7 +527,11 @@ const deserializeChallengeConfig = (
     description: data.description ?? templateConfig.description,
     timezone: UTC_TIMEZONE,
     badgeThresholds: parsedThresholds ?? templateConfig.badgeThresholds,
-    activePostId: isBlank(data.activePostId) ? null : data.activePostId,
+    devMode: data.devMode === '1',
+    activePostId:
+      !activePostIdRaw || activePostIdRaw.trim().length === 0
+        ? null
+        : activePostIdRaw,
     updatedAt,
     createdAt,
   };
@@ -374,6 +586,7 @@ export const setChallengeConfig = async (
       (templateChanged ? templateDefaults.description : existing.description),
     timezone: UTC_TIMEZONE,
     badgeThresholds: nextBadgeThresholds,
+    devMode: update.devMode ?? existing.devMode,
     activePostId:
       update.activePostId !== undefined ? update.activePostId : existing.activePostId,
     updatedAt: Date.now(),
@@ -427,9 +640,11 @@ export const resetChallengeProgress = async (
   );
   await redis.hSet(keys.devSettings(subredditId), {
     devDayOffset: '0',
+    devTimeOffsetSeconds: '0',
   });
   await redis.del(
     keys.leaderboard(subredditId),
+    keys.usernames(subredditId),
     keys.challengeStats(subredditId),
     keys.participants(subredditId)
   );
@@ -438,7 +653,79 @@ export const resetChallengeProgress = async (
 };
 
 export const getParticipantCount = async (subredditId: string): Promise<number> => {
-  return await redis.hLen(keys.participants(subredditId));
+  const today = await getTodayDayNumber(subredditId);
+  const stats = await getChallengeStats(subredditId, today);
+  return stats.participantsTotal;
+};
+
+export type ActionType = 'join' | 'checkin';
+
+export const checkActionRateLimit = async (
+  subredditId: string,
+  userId: string,
+  action: ActionType,
+  nowMs: number
+): Promise<RateLimitDecision> => {
+  const field = action === 'join' ? 'lastJoinAttemptMs' : 'lastCheckinAttemptMs';
+  const key = keys.rateLimit(subredditId, userId);
+  const raw = await redis.hGet(key, field);
+  const lastAttemptMs = raw ? Number.parseInt(raw, 10) : null;
+  const decision = evaluateActionThrottle(
+    nowMs,
+    Number.isNaN(lastAttemptMs ?? Number.NaN) ? null : lastAttemptMs
+  );
+
+  if (decision.allowed) {
+    await redis.hSet(key, {
+      [field]: String(nowMs),
+    });
+  }
+
+  return decision;
+};
+
+export const clearUserRateLimit = async (
+  subredditId: string,
+  userId: string
+): Promise<void> => {
+  await redis.del(keys.rateLimit(subredditId, userId));
+};
+
+const pruneExpiredTodaySet = async (
+  subredditId: string,
+  todayDay: number
+): Promise<void> => {
+  const expiredDay = todayDay - TODAY_SET_RETENTION_DAYS - 1;
+  if (expiredDay < 0) {
+    return;
+  }
+
+  try {
+    await redis.del(keys.todayCheckins(subredditId, expiredDay));
+  } catch {
+    // Best-effort retention cleanup should never block check-in or repair.
+  }
+};
+
+export const storeUsername = async (
+  subredditId: string,
+  userId: string,
+  username: string | undefined
+): Promise<void> => {
+  const normalized = username?.trim();
+  if (!normalized) {
+    return;
+  }
+
+  await redis.hSet(keys.usernames(subredditId), {
+    [userId]: normalized,
+  });
+};
+
+export const getStoredUsernames = async (
+  subredditId: string
+): Promise<Record<string, string>> => {
+  return await redis.hGetAll(keys.usernames(subredditId));
 };
 
 const syncLeaderboardEntry = async (
@@ -475,6 +762,10 @@ export const joinChallenge = async (
     bestStreak: 0,
     streakStartDayUTC: null,
     lastCheckinDayUTC: null,
+    freezeTokens: 0,
+    freezeSaves: 0,
+    badges: [],
+    isParticipant: true,
   };
 
   await setUserState(subredditId, userId, initialState);
@@ -483,7 +774,10 @@ export const joinChallenge = async (
     [userId]: '1',
   });
   if (participantsAdded > 0) {
-    await redis.hIncrBy(keys.challengeStats(subredditId), 'participantsCount', 1);
+    const today = await getTodayDayNumber(subredditId);
+    await updateChallengeStats(subredditId, today, {
+      incrementParticipants: true,
+    });
   }
 
   return initialState;
@@ -514,36 +808,69 @@ export const recordCheckIn = async (
   subredditId: string,
   userId: string,
   day: number
-): Promise<UserState | null> => {
+): Promise<CheckInResult | null> => {
   const existing = await getUserState(subredditId, userId);
   if (!existing) {
     return null;
   }
 
-  const updated = applyCheckIn(existing, day);
-  await setUserState(subredditId, userId, updated);
-  await syncLeaderboardEntry(subredditId, userId, updated);
-  await redis.hIncrBy(
+  const result = applyCheckInWithMetadata(existing, day);
+  await setUserState(subredditId, userId, result.state);
+  await syncLeaderboardEntry(subredditId, userId, result.state);
+  const todayKey = keys.todayCheckins(subredditId, day);
+  const added = await redis.hSet(todayKey, {
+    [userId]: '1',
+  });
+  const todaySetSize = await redis.hLen(todayKey);
+  const statsStored = await redis.hGetAll(keys.challengeStats(subredditId));
+  const parsedStats = parseAggregateStatsRecord(statsStored, day);
+  const nextStats = applyCheckinStatsUpdate(parsedStats, day, {
+    wasNewTodayCheckin: added > 0,
+    todaySetSize,
+    bestStreakCandidate: result.state.bestStreak,
+  });
+  await redis.hSet(
     keys.challengeStats(subredditId),
-    `checkins:${String(day)}`,
-    1
+    serializeAggregateStatsRecord(nextStats)
   );
+  await pruneExpiredTodaySet(subredditId, day);
 
-  return updated;
+  return result;
 };
 
 export const getChallengeStats = async (
   subredditId: string,
   day: number
 ): Promise<ChallengeStats> => {
-  const stats = await redis.hMGet(keys.challengeStats(subredditId), [
-    'participantsCount',
-    `checkins:${String(day)}`,
-  ]);
+  return await syncChallengeStatsCheckinsToday(subredditId, day);
+};
+
+export const getTodayCheckinsCount = async (
+  subredditId: string,
+  day: number
+): Promise<number> => await redis.hLen(keys.todayCheckins(subredditId, day));
+
+export const repairTodayStats = async (
+  subredditId: string,
+  day: number
+): Promise<{ oldStats: ChallengeStats; newStats: ChallengeStats; todaySetSize: number }> => {
+  const oldStats = await getChallengeStats(subredditId, day);
+  const todaySetSize = await getTodayCheckinsCount(subredditId, day);
+  const repaired: ChallengeStats = {
+    ...oldStats,
+    lastStatsDay: day,
+    checkinsToday: todaySetSize,
+  };
+  await redis.hSet(
+    keys.challengeStats(subredditId),
+    serializeAggregateStatsRecord(repaired)
+  );
+  await pruneExpiredTodaySet(subredditId, day);
 
   return {
-    participantsCount: Number.parseInt(stats[0] ?? '0', 10) || 0,
-    checkedInTodayCount: Number.parseInt(stats[1] ?? '0', 10) || 0,
+    oldStats,
+    newStats: repaired,
+    todaySetSize,
   };
 };
 
@@ -568,6 +895,7 @@ export const getLeaderboard = async (
         userId: member,
         currentStreak: score,
         bestStreak: userState.bestStreak,
+        streakAchievedDayUTC: userState.lastCheckinDayUTC,
         streakStartDayUTC: userState.streakStartDayUTC,
         lastCheckinDayUTC: userState.lastCheckinDayUTC,
       } satisfies LeaderboardEntry;
@@ -578,18 +906,28 @@ export const getLeaderboard = async (
 
   return leaderboardUsers
     .filter((entry): entry is LeaderboardEntry => entry !== null)
-    .sort((a, b) => {
-      if (b.currentStreak !== a.currentStreak) {
-        return b.currentStreak - a.currentStreak;
-      }
-
-      const aStart = a.streakStartDayUTC ?? tieBreakDay;
-      const bStart = b.streakStartDayUTC ?? tieBreakDay;
-      if (aStart !== bStart) {
-        return aStart - bStart;
-      }
-
-      return a.userId.localeCompare(b.userId);
-    })
+    .sort((a, b) => compareLeaderboardEntries(a, b, tieBreakDay))
     .slice(0, limit);
+};
+
+export const compareLeaderboardEntries = (
+  a: LeaderboardEntry,
+  b: LeaderboardEntry,
+  tieBreakDay = Number.MAX_SAFE_INTEGER
+): number => {
+  if (b.currentStreak !== a.currentStreak) {
+    return b.currentStreak - a.currentStreak;
+  }
+
+  if (b.bestStreak !== a.bestStreak) {
+    return b.bestStreak - a.bestStreak;
+  }
+
+  const aAchieved = a.streakAchievedDayUTC ?? a.lastCheckinDayUTC ?? tieBreakDay;
+  const bAchieved = b.streakAchievedDayUTC ?? b.lastCheckinDayUTC ?? tieBreakDay;
+  if (aAchieved !== bAchieved) {
+    return aAchieved - bAchieved;
+  }
+
+  return a.userId.localeCompare(b.userId);
 };
