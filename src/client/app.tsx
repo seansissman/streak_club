@@ -507,6 +507,12 @@ const App = () => {
   const shouldShowExpandButton = mode === 'inline' && isTouch;
   const isInlineExpandLinkVisible = shouldShowInlineExpandLink(isInlineMode);
   const shouldEnableCardExpand = shouldEnableInlineCardExpand(isInlineMode);
+  /*
+  Manual access checklist:
+  - SacPistachian (allowlisted dev): DevTools visible and usable.
+  - Moderator not in allowlist: Mod UI visible, DevTools hidden.
+  - Normal user: Basic UI only.
+  */
   const canUseModTools = accessLevel === 'mod' || accessLevel === 'dev';
   const showDevToolsPanel = accessLevel === 'dev';
   const highestBadge = me?.state ? getHighestBadge(me.state.badges) : null;
@@ -1263,6 +1269,7 @@ const App = () => {
         {showDevToolsPanel && devTime && (
           <section className="bg-white rounded-xl p-5 border border-amber-200 space-y-3">
             <h2 className="text-lg font-semibold">UTC Reset Test Panel</h2>
+            <p className="text-xs font-semibold text-amber-800">Access: DEV</p>
             <p className="text-sm text-amber-700">
               DEV ONLY: Simulates UTC time to stress reset boundaries.
             </p>

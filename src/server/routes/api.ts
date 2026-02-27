@@ -538,9 +538,6 @@ api.get('/dev/time', async (c) => {
           'You must be logged in to view dev time settings'
         );
       }
-      if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
-        return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
-      }
       throw error;
     }
     const utcNow = await getUtcNow(subredditId);
@@ -891,7 +888,7 @@ api.post('/dev/stats/repair', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
     try {
-      await requireDevAccess();
+      await requireModAccess();
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -899,6 +896,14 @@ api.post('/dev/stats/repair', async (c) => {
           401,
           'AUTH_REQUIRED',
           'You must be logged in to repair stats'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can repair stats'
         );
       }
       if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
