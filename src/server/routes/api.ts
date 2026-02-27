@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Context as HonoContext } from 'hono';
 import { context, reddit } from '@devvit/web/server';
-import { getAccessLevel, isDev, isMod, type AccessLevel } from '../access';
+import { isModerator } from '../moderation';
 import {
   computeNextResetFromDayNumber,
   ensureChallengeConfig,
@@ -103,6 +103,19 @@ const requireUserId = (): string => {
   return context.userId;
 };
 
+const assertPlaytest = (req: HonoContext['req']): void => {
+  const fromQuery = req.query('playtest');
+  const fromHeader = req.header('x-playtest');
+  if (fromQuery === '1' || fromHeader === '1') {
+    return;
+  }
+
+  console.warn(
+    `[dev-tools] blocked non-playtest request method=${req.method} path=${req.path}`
+  );
+  throw new Error('PLAYTEST_REQUIRED');
+};
+
 const parsePrivacy = (value: unknown): Privacy | null => {
   if (value === 'public' || value === 'private') {
     return value;
@@ -143,26 +156,21 @@ const canCheckInToday = (state: UserState | null, day: number): boolean => {
   return day > state.lastCheckinDayUTC;
 };
 
-const requireModAccess = async (): Promise<void> => {
-  if (!context.username) {
+const requireModerator = async (): Promise<{ username: string }> => {
+  const username = context.username;
+  if (!username) {
     throw new Error('AUTH_REQUIRED');
   }
 
-  const accessLevel = await getAccessLevel(context);
-  if (!isMod(accessLevel)) {
+  if (!(await isModerator(context))) {
     throw new Error('MODERATOR_REQUIRED');
   }
+
+  return { username };
 };
 
-const requireDevAccess = async (): Promise<void> => {
-  if (!context.username) {
-    throw new Error('AUTH_REQUIRED');
-  }
-
-  const accessLevel = await getAccessLevel(context);
-  if (!isDev(accessLevel)) {
-    throw new Error('DEV_MODE_DISABLED');
-  }
+const requireDevToolsAccess = async (): Promise<void> => {
+  // Temporary: keep dev tools universally accessible for testing.
 };
 
 const logStress = (label: string, data: Record<string, unknown>): void => {
@@ -209,7 +217,7 @@ api.post('/config', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
     try {
-      await requireModAccess();
+      await requireModerator();
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -482,7 +490,7 @@ api.get('/me', async (c) => {
     const state = await getUserState(subredditId, userId);
     const utcNow = await getUtcNow(subredditId);
     const today = utcNow.utcDayNumber;
-    const accessLevel = await getAccessLevel(context);
+    const moderator = await isModerator(context);
 
     let myRank: number | null = null;
     if (state?.privacy === 'public') {
@@ -498,8 +506,7 @@ api.get('/me', async (c) => {
       canCheckInToday: canCheckInToday(state, today),
       nextResetUtcTimestamp: computeNextResetFromDayNumber(today),
       myRank,
-      isModerator: isMod(accessLevel),
-      accessLevel,
+      isModerator: moderator,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -507,28 +514,12 @@ api.get('/me', async (c) => {
   }
 });
 
-api.get('/viewer-context', async (c) => {
-  try {
-    const accessLevel = await getAccessLevel(context);
-    return c.json({
-      status: 'ok',
-      accessLevel,
-    });
-  } catch (error) {
-    console.warn('viewer-context fallback to user', error);
-    const fallback: AccessLevel = 'user';
-    return c.json({
-      status: 'ok',
-      accessLevel: fallback,
-    });
-  }
-});
-
 api.get('/dev/time', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
     try {
-      await requireDevAccess();
+      assertPlaytest(c.req);
+      await requireDevToolsAccess();
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -537,6 +528,20 @@ api.get('/dev/time', async (c) => {
           'AUTH_REQUIRED',
           'You must be logged in to view dev time settings'
         );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can view dev time settings'
+        );
+      }
+      if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
+        return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
+      }
+      if (error instanceof Error && error.message === 'PLAYTEST_REQUIRED') {
+        return jsonError(c, 403, 'PLAYTEST_REQUIRED', 'Dev tools are available only in playtest.');
       }
       throw error;
     }
@@ -565,7 +570,8 @@ api.post('/dev/time', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
     try {
-      await requireDevAccess();
+      assertPlaytest(c.req);
+      await requireDevToolsAccess();
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -575,8 +581,19 @@ api.post('/dev/time', async (c) => {
           'You must be logged in to update dev time settings'
         );
       }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can update dev time settings'
+        );
+      }
       if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
         return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
+      }
+      if (error instanceof Error && error.message === 'PLAYTEST_REQUIRED') {
+        return jsonError(c, 403, 'PLAYTEST_REQUIRED', 'Dev tools are available only in playtest.');
       }
       throw error;
     }
@@ -625,7 +642,8 @@ api.post('/dev/reset', async (c) => {
     const { subredditId } = requireSubredditContext();
     const userId = requireUserId();
     try {
-      await requireDevAccess();
+      assertPlaytest(c.req);
+      await requireDevToolsAccess();
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -635,8 +653,19 @@ api.post('/dev/reset', async (c) => {
           'You must be logged in to reset dev test data'
         );
       }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can reset dev test data'
+        );
+      }
       if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
         return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
+      }
+      if (error instanceof Error && error.message === 'PLAYTEST_REQUIRED') {
+        return jsonError(c, 403, 'PLAYTEST_REQUIRED', 'Dev tools are available only in playtest.');
       }
       throw error;
     }
@@ -669,7 +698,8 @@ api.post('/dev/stress', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
     try {
-      await requireDevAccess();
+      assertPlaytest(c.req);
+      await requireDevToolsAccess();
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -679,8 +709,19 @@ api.post('/dev/stress', async (c) => {
           'You must be logged in to run UTC reset stress tests'
         );
       }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can run UTC reset stress tests'
+        );
+      }
       if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
         return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
+      }
+      if (error instanceof Error && error.message === 'PLAYTEST_REQUIRED') {
+        return jsonError(c, 403, 'PLAYTEST_REQUIRED', 'Dev tools are available only in playtest.');
       }
       throw error;
     }
@@ -888,7 +929,7 @@ api.post('/dev/stats/repair', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
     try {
-      await requireModAccess();
+      await requireModerator();
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -905,9 +946,6 @@ api.post('/dev/stats/repair', async (c) => {
           'MODERATOR_REQUIRED',
           'Only moderators can repair stats'
         );
-      }
-      if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
-        return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
       }
       throw error;
     }
@@ -932,7 +970,8 @@ api.get('/dev/stats/debug', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
     try {
-      await requireDevAccess();
+      assertPlaytest(c.req);
+      await requireDevToolsAccess();
     } catch (error) {
       if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
         return jsonError(
@@ -942,8 +981,19 @@ api.get('/dev/stats/debug', async (c) => {
           'You must be logged in to view stats debug snapshot'
         );
       }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can view stats debug snapshot'
+        );
+      }
       if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
         return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
+      }
+      if (error instanceof Error && error.message === 'PLAYTEST_REQUIRED') {
+        return jsonError(c, 403, 'PLAYTEST_REQUIRED', 'Dev tools are available only in playtest.');
       }
       throw error;
     }

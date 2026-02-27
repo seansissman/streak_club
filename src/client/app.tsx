@@ -11,7 +11,6 @@ import {
   shouldRenderCheckInButton,
   shouldShowInlineExpandLink,
 } from './state';
-import { useAccessLevel, type AccessLevel } from './use_access_level';
 
 type Privacy = 'public' | 'private';
 type TemplateId =
@@ -74,7 +73,6 @@ type MeResponse = {
   nextResetUtcTimestamp: number;
   myRank: number | null;
   isModerator: boolean;
-  accessLevel: AccessLevel;
 };
 
 type LeaderboardResponse = {
@@ -262,6 +260,18 @@ const formatValidationDetails = (
   return parts.join(' | ');
 };
 
+const isPlaytestClient = (): boolean =>
+  typeof window !== 'undefined' &&
+  new URLSearchParams(window.location.search).has('playtest');
+
+/*
+TEST CHECKLIST
+- Playtest URL => DevTools visible.
+- Installed (non-playtest) => DevTools hidden.
+- Deep link to dev route (non-playtest) => blocked.
+- Dev endpoints (non-playtest) => 403.
+*/
+
 const BADGE_MILESTONES: Array<{ milestone: number; badge: string }> = [
   { milestone: 7, badge: 'Committed' },
   { milestone: 30, badge: 'Consistent' },
@@ -363,7 +373,6 @@ const apiRequest = async <T,>(
 };
 
 const App = () => {
-  const accessLevel = useAccessLevel();
   const [config, setConfig] = useState<ChallengeConfig | null>(null);
   const [participantsTotal, setParticipantsTotal] = useState(0);
   const [checkinsToday, setCheckinsToday] = useState(0);
@@ -397,6 +406,9 @@ const App = () => {
   );
   const [checkInFeedback, setCheckInFeedback] = useState<CheckInFeedback | null>(null);
   const [showCheckInCelebration, setShowCheckInCelebration] = useState(false);
+  const playtestMode = isPlaytestClient();
+  const playtestQuerySuffix = playtestMode ? '&playtest=1' : '';
+  const playtestPathSuffix = playtestMode ? '?playtest=1' : '';
 
   const loadAll = useCallback(async () => {
     const reqTs = Date.now();
@@ -412,10 +424,16 @@ const App = () => {
       apiRequest<TemplatesResponse>(`/api/templates?ts=${reqTs}`),
       apiRequest<MeResponse>(`/api/me?ts=${reqTs}`),
       apiRequest<LeaderboardResponse>(`/api/leaderboard?limit=10&ts=${reqTs}`),
-      apiRequest<DevTimeResponse>(`/api/dev/time?ts=${reqTs}`).catch(() => null),
-      apiRequest<DevStatsDebugResponse>(`/api/dev/stats/debug?ts=${reqTs}`).catch(
-        () => null
-      ),
+      playtestMode
+        ? apiRequest<DevTimeResponse>(
+            `/api/dev/time?ts=${reqTs}${playtestQuerySuffix}`
+          ).catch(() => null)
+        : Promise.resolve(null),
+      playtestMode
+        ? apiRequest<DevStatsDebugResponse>(
+            `/api/dev/stats/debug?ts=${reqTs}${playtestQuerySuffix}`
+          ).catch(() => null)
+        : Promise.resolve(null),
     ]);
 
     setConfig(configRes.config);
@@ -429,7 +447,7 @@ const App = () => {
     setLeaderboard(leaderboardRes.leaderboard);
     setDevTime(devTimeRes);
     setDevStatsDebug(devStatsDebugRes);
-  }, []);
+  }, [playtestMode, playtestQuerySuffix]);
 
   useEffect(() => {
     if (!config) {
@@ -507,14 +525,6 @@ const App = () => {
   const shouldShowExpandButton = mode === 'inline' && isTouch;
   const isInlineExpandLinkVisible = shouldShowInlineExpandLink(isInlineMode);
   const shouldEnableCardExpand = shouldEnableInlineCardExpand(isInlineMode);
-  /*
-  Manual access checklist:
-  - SacPistachian (allowlisted dev): DevTools visible and usable.
-  - Moderator not in allowlist: Mod UI visible, DevTools hidden.
-  - Normal user: Basic UI only.
-  */
-  const canUseModTools = accessLevel === 'mod' || accessLevel === 'dev';
-  const showDevToolsPanel = accessLevel === 'dev';
   const highestBadge = me?.state ? getHighestBadge(me.state.badges) : null;
   const checkedInEncouragement = useMemo(() => {
     const effectiveUtcDay =
@@ -640,7 +650,7 @@ const App = () => {
       try {
         setActionLoading(true);
         setError(null);
-        await apiRequest<DevTimeResponse>('/api/dev/time', {
+        await apiRequest<DevTimeResponse>(`/api/dev/time${playtestPathSuffix}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ devTimeOffsetSeconds: nextOffset }),
@@ -654,7 +664,7 @@ const App = () => {
         setActionLoading(false);
       }
     },
-    [devTime?.devTimeOffsetSeconds, refreshAfterAction]
+    [devTime?.devTimeOffsetSeconds, playtestPathSuffix, refreshAfterAction]
   );
 
   const onSetDevTimeOffset = useCallback(
@@ -662,7 +672,7 @@ const App = () => {
       try {
         setActionLoading(true);
         setError(null);
-        await apiRequest<DevTimeResponse>('/api/dev/time', {
+        await apiRequest<DevTimeResponse>(`/api/dev/time${playtestPathSuffix}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ devTimeOffsetSeconds: nextOffsetSeconds }),
@@ -676,14 +686,14 @@ const App = () => {
         setActionLoading(false);
       }
     },
-    [refreshAfterAction]
+    [playtestPathSuffix, refreshAfterAction]
   );
 
   const onRunBoundaryStress = useCallback(async () => {
     try {
       setActionLoading(true);
       setError(null);
-      const result = await apiRequest<DevStressResponse>('/api/dev/stress', {
+      const result = await apiRequest<DevStressResponse>(`/api/dev/stress${playtestPathSuffix}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -698,7 +708,7 @@ const App = () => {
     } finally {
       setActionLoading(false);
     }
-  }, [refreshAfterAction]);
+  }, [playtestPathSuffix, refreshAfterAction]);
 
   const onRepairTodayStats = useCallback(async () => {
     try {
@@ -734,7 +744,7 @@ const App = () => {
       setActionLoading(true);
       setError(null);
       setDevNotice(null);
-      const result = await apiRequest<DevResetResponse>('/api/dev/reset', {
+      const result = await apiRequest<DevResetResponse>(`/api/dev/reset${playtestPathSuffix}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -751,7 +761,7 @@ const App = () => {
     } finally {
       setActionLoading(false);
     }
-  }, [refreshAfterAction, resetConfirmArmed]);
+  }, [playtestPathSuffix, refreshAfterAction, resetConfirmArmed]);
 
   const onLoadTemplateDefaults = useCallback(() => {
     const selected = templates.find((template) => template.id === configTemplateId);
@@ -836,6 +846,160 @@ const App = () => {
     saveConfig,
   ]);
 
+  const renderDevToolsPanel = () => {
+    if (!isPlaytestClient()) {
+      return null;
+    }
+
+    if (!devTime) {
+      return null;
+    }
+
+    return (
+      <section className="bg-white rounded-xl p-5 border border-amber-200 space-y-3">
+        <h2 className="text-lg font-semibold">UTC Reset Test Panel</h2>
+        <p className="text-sm text-amber-700">
+          DEV ONLY: Simulates UTC time to stress reset boundaries.
+        </p>
+        {devNotice && (
+          <p className="text-sm text-amber-800 bg-amber-100 border border-amber-300 rounded-lg px-3 py-2">
+            {devNotice}
+          </p>
+        )}
+        <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
+          <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
+            <div className="text-slate-500">Simulated UTC</div>
+            <div className="text-sm font-semibold break-all">
+              {devTime.simulatedUtcNow}
+            </div>
+          </div>
+          <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
+            <div className="text-slate-500">UTC day now</div>
+            <div className="text-lg font-semibold">{devTime.utcDayNumberNow}</div>
+          </div>
+          <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
+            <div className="text-slate-500">Seconds until reset</div>
+            <div className="text-lg font-semibold">{devTime.secondsUntilReset}s</div>
+          </div>
+        </div>
+        <div className="text-sm text-slate-600">
+          Offset: {devTime.devTimeOffsetSeconds}s
+        </div>
+        <div className="flex flex-wrap gap-2">
+          <button
+            className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+            onClick={() => onAdjustDevTimeOffset(10)}
+            disabled={actionLoading}
+          >
+            +10s
+          </button>
+          <button
+            className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+            onClick={() => onAdjustDevTimeOffset(60)}
+            disabled={actionLoading}
+          >
+            +60s
+          </button>
+          <button
+            className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+            onClick={() => onAdjustDevTimeOffset(600)}
+            disabled={actionLoading}
+          >
+            +10m
+          </button>
+          <button
+            className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+            onClick={() => onAdjustDevTimeOffset(3600)}
+            disabled={actionLoading}
+          >
+            +1h
+          </button>
+          <button
+            className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+            onClick={() => onAdjustDevTimeOffset(82_800)}
+            disabled={actionLoading}
+          >
+            +23h
+          </button>
+          <button
+            className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+            onClick={() => onAdjustDevTimeOffset(86_400)}
+            disabled={actionLoading}
+          >
+            +24h
+          </button>
+          <button
+            className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+            onClick={() => onAdjustDevTimeOffset(90_000)}
+            disabled={actionLoading}
+          >
+            +25h
+          </button>
+          <button
+            className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+            onClick={() => onSetDevTimeOffset(0)}
+            disabled={actionLoading}
+          >
+            Reset offset (0)
+          </button>
+          <button
+            className="px-3 py-2 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-700 text-sm font-medium"
+            onClick={onRunBoundaryStress}
+            disabled={actionLoading}
+          >
+            Run Boundary Stress
+          </button>
+          <button
+            className="px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-sm font-medium"
+            onClick={onRepairTodayStats}
+            disabled={actionLoading}
+          >
+            Repair Today Stats
+          </button>
+          <button
+            className="px-3 py-2 rounded-lg border border-rose-300 bg-rose-50 text-rose-700 text-sm font-medium"
+            onClick={onResetDevData}
+            disabled={actionLoading}
+          >
+            {resetConfirmArmed ? 'Confirm reset data' : 'Reset all test data'}
+          </button>
+          {resetConfirmArmed && (
+            <button
+              className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+              onClick={() => {
+                setResetConfirmArmed(false);
+                setDevNotice(null);
+              }}
+              disabled={actionLoading}
+            >
+              Cancel
+            </button>
+          )}
+        </div>
+        {stressReports.length > 0 && (
+          <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-1 text-sm">
+            {stressReports.map((report, index) => (
+              <div key={`${report.label}-${index}`} className="text-slate-700">
+                {report.ok ? '✅' : '❌'} {report.label}
+                {report.details ? ` (${report.details})` : ''}
+              </div>
+            ))}
+          </div>
+        )}
+        {devStatsDebug && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 font-mono break-all">
+            utcDay={devStatsDebug.utcDayNumber} lastStatsDay={devStatsDebug.lastStatsDay}{' '}
+            participants={devStatsDebug.participantsTotal} checkinsToday=
+            {devStatsDebug.checkinsToday} checkinsAllTime=
+            {devStatsDebug.checkinsAllTime} longestStreak=
+            {devStatsDebug.longestStreakAllTime} todaySetSize=
+            {devStatsDebug.todaySetSize}
+          </div>
+        )}
+      </section>
+    );
+  };
+
   if (loading) {
     return (
       <div className="bg-slate-100 text-slate-900 p-6">
@@ -899,7 +1063,7 @@ const App = () => {
             </div>
           )}
 
-          {configNeedsSetup && accessLevel === 'user' && (
+          {configNeedsSetup && !me?.isModerator && (
             <div className="w-full rounded-lg bg-amber-50 text-amber-800 border border-amber-200 p-3 text-sm">
               Challenge configuration is not set yet. A moderator needs to pick a
               template and save the challenge settings first.
@@ -1102,7 +1266,7 @@ const App = () => {
           </div>
         </section>
 
-        {canUseModTools && (
+        {me?.isModerator && (
           <section className="bg-white rounded-xl p-4 border border-slate-200 space-y-2">
             <h2 className="text-base font-semibold">Setup / Admin</h2>
             {config?.activePostId ? (
@@ -1144,7 +1308,7 @@ const App = () => {
           </section>
         )}
 
-        {canUseModTools && (
+        {me?.isModerator && (
           <section className="bg-white rounded-xl p-5 border border-indigo-200 space-y-3">
             <h2 className="text-lg font-semibold">Challenge Config (Moderator)</h2>
             <p className="text-xs text-slate-500">Only one active tracker per subreddit.</p>
@@ -1266,150 +1430,7 @@ const App = () => {
           </section>
         )}
 
-        {showDevToolsPanel && devTime && (
-          <section className="bg-white rounded-xl p-5 border border-amber-200 space-y-3">
-            <h2 className="text-lg font-semibold">UTC Reset Test Panel</h2>
-            <p className="text-xs font-semibold text-amber-800">Access: DEV</p>
-            <p className="text-sm text-amber-700">
-              DEV ONLY: Simulates UTC time to stress reset boundaries.
-            </p>
-            {devNotice && (
-              <p className="text-sm text-amber-800 bg-amber-100 border border-amber-300 rounded-lg px-3 py-2">
-                {devNotice}
-              </p>
-            )}
-            <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-sm">
-              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
-                <div className="text-slate-500">Simulated UTC</div>
-                <div className="text-sm font-semibold break-all">
-                  {devTime.simulatedUtcNow}
-                </div>
-              </div>
-              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
-                <div className="text-slate-500">UTC day now</div>
-                <div className="text-lg font-semibold">{devTime.utcDayNumberNow}</div>
-              </div>
-              <div className="rounded-lg bg-amber-50 border border-amber-200 p-3">
-                <div className="text-slate-500">Seconds until reset</div>
-                <div className="text-lg font-semibold">{devTime.secondsUntilReset}s</div>
-              </div>
-            </div>
-            <div className="text-sm text-slate-600">
-              Offset: {devTime.devTimeOffsetSeconds}s
-            </div>
-            <div className="flex flex-wrap gap-2">
-              <button
-                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                onClick={() => onAdjustDevTimeOffset(10)}
-                disabled={actionLoading}
-              >
-                +10s
-              </button>
-              <button
-                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                onClick={() => onAdjustDevTimeOffset(60)}
-                disabled={actionLoading}
-              >
-                +60s
-              </button>
-              <button
-                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                onClick={() => onAdjustDevTimeOffset(600)}
-                disabled={actionLoading}
-              >
-                +10m
-              </button>
-              <button
-                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                onClick={() => onAdjustDevTimeOffset(3600)}
-                disabled={actionLoading}
-              >
-                +1h
-              </button>
-              <button
-                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                onClick={() => onAdjustDevTimeOffset(82_800)}
-                disabled={actionLoading}
-              >
-                +23h
-              </button>
-              <button
-                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                onClick={() => onAdjustDevTimeOffset(86_400)}
-                disabled={actionLoading}
-              >
-                +24h
-              </button>
-              <button
-                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                onClick={() => onAdjustDevTimeOffset(90_000)}
-                disabled={actionLoading}
-              >
-                +25h
-              </button>
-              <button
-                className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                onClick={() => onSetDevTimeOffset(0)}
-                disabled={actionLoading}
-              >
-                Reset offset (0)
-              </button>
-              <button
-                className="px-3 py-2 rounded-lg border border-indigo-300 bg-indigo-50 text-indigo-700 text-sm font-medium"
-                onClick={onRunBoundaryStress}
-                disabled={actionLoading}
-              >
-                Run Boundary Stress
-              </button>
-              <button
-                className="px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-sm font-medium"
-                onClick={onRepairTodayStats}
-                disabled={actionLoading}
-              >
-                Repair Today Stats
-              </button>
-              <button
-                className="px-3 py-2 rounded-lg border border-rose-300 bg-rose-50 text-rose-700 text-sm font-medium"
-                onClick={onResetDevData}
-                disabled={actionLoading}
-              >
-                {resetConfirmArmed ? 'Confirm reset data' : 'Reset all test data'}
-              </button>
-              {resetConfirmArmed && (
-                <button
-                  className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                  onClick={() => {
-                    setResetConfirmArmed(false);
-                    setDevNotice(null);
-                  }}
-                  disabled={actionLoading}
-                >
-                  Cancel
-                </button>
-              )}
-            </div>
-            {stressReports.length > 0 && (
-              <div className="rounded-lg border border-slate-200 bg-white p-3 space-y-1 text-sm">
-                {stressReports.map((report, index) => (
-                  <div key={`${report.label}-${index}`} className="text-slate-700">
-                    {report.ok ? '✅' : '❌'} {report.label}
-                    {report.details ? ` (${report.details})` : ''}
-                  </div>
-                ))}
-              </div>
-            )}
-            {devStatsDebug && (
-              <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 font-mono break-all">
-                utcDay={devStatsDebug.utcDayNumber} lastStatsDay={devStatsDebug.lastStatsDay}{' '}
-                participants={devStatsDebug.participantsTotal} checkinsToday=
-                {devStatsDebug.checkinsToday} checkinsAllTime=
-                {devStatsDebug.checkinsAllTime} longestStreak=
-                {devStatsDebug.longestStreakAllTime} todaySetSize=
-                {devStatsDebug.todaySetSize}
-              </div>
-            )}
-          </section>
-        )}
+        {renderDevToolsPanel()}
 
         {error && (
           <div className="rounded-lg border border-rose-200 bg-rose-50 p-3 text-sm text-rose-700">
