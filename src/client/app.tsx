@@ -79,11 +79,10 @@ type DebugContextResponse = {
   status: 'ok';
   rawUsername: string | null;
   subredditName: string | null;
+  parsedContextSubredditName: string | null;
   requestUrl: string;
-  requestPlaytestQuery: string | null;
-  requestPlaytestHeader: string | null;
   isModeratorComputed: boolean;
-  playtestDetectedServer: boolean;
+  isPlaytestServer: boolean;
 };
 
 type LeaderboardResponse = {
@@ -271,9 +270,61 @@ const formatValidationDetails = (
   return parts.join(' | ');
 };
 
-const isPlaytestClient = (): boolean =>
-  typeof window !== 'undefined' &&
-  new URLSearchParams(window.location.search).has('playtest');
+type WebviewContextData = {
+  subredditName: string | null;
+};
+
+const parseWebviewContextData = (rawContext: string | null): WebviewContextData | null => {
+  if (!rawContext) {
+    return null;
+  }
+
+  const candidates = [rawContext];
+  try {
+    const decoded = decodeURIComponent(rawContext);
+    if (decoded !== rawContext) {
+      candidates.push(decoded);
+    }
+  } catch {
+    // Ignore invalid percent encoding and continue with raw payload.
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (typeof parsed !== 'object' || parsed === null) {
+        continue;
+      }
+
+      const subredditName =
+        'subredditName' in parsed && typeof parsed.subredditName === 'string'
+          ? parsed.subredditName
+          : null;
+      return { subredditName };
+    } catch {
+      // Try next decode candidate.
+    }
+  }
+
+  return null;
+};
+
+const isPlaytestSubredditName = (subredditName: string | null): boolean => {
+  if (!subredditName) {
+    return false;
+  }
+  const normalized = subredditName.trim().toLowerCase();
+  return normalized === 'streak_club_dev' || normalized.endsWith('_dev');
+};
+
+const isPlaytestClient = (): boolean => {
+  if (typeof window === 'undefined') {
+    return false;
+  }
+  const rawContext = new URLSearchParams(window.location.search).get('context');
+  const parsedContext = parseWebviewContextData(rawContext);
+  return isPlaytestSubredditName(parsedContext?.subredditName ?? null);
+};
 
 /*
 TEST CHECKLIST
@@ -419,9 +470,20 @@ const App = () => {
   const [showCheckInCelebration, setShowCheckInCelebration] = useState(false);
   const [debugContext, setDebugContext] = useState<DebugContextResponse | null>(null);
   const [debugContextError, setDebugContextError] = useState<string | null>(null);
-  const playtestMode = isPlaytestClient();
-  const playtestQuerySuffix = playtestMode ? '&playtest=1' : '';
-  const playtestPathSuffix = playtestMode ? '?playtest=1' : '';
+  const rawWebviewContextParam =
+    typeof window !== 'undefined'
+      ? new URLSearchParams(window.location.search).get('context')
+      : null;
+  const parsedWebviewContext = parseWebviewContextData(rawWebviewContextParam);
+  const playtestMode = isPlaytestSubredditName(
+    parsedWebviewContext?.subredditName ?? null
+  );
+  const contextQuerySuffix = rawWebviewContextParam
+    ? `&context=${encodeURIComponent(rawWebviewContextParam)}`
+    : '';
+  const contextPathSuffix = rawWebviewContextParam
+    ? `?context=${encodeURIComponent(rawWebviewContextParam)}`
+    : '';
   const currentHref =
     typeof window !== 'undefined' ? window.location.href : '(window unavailable)';
 
@@ -441,12 +503,12 @@ const App = () => {
       apiRequest<LeaderboardResponse>(`/api/leaderboard?limit=10&ts=${reqTs}`),
       playtestMode
         ? apiRequest<DevTimeResponse>(
-            `/api/dev/time?ts=${reqTs}${playtestQuerySuffix}`
+            `/api/dev/time?ts=${reqTs}${contextQuerySuffix}`
           ).catch(() => null)
         : Promise.resolve(null),
       playtestMode
         ? apiRequest<DevStatsDebugResponse>(
-            `/api/dev/stats/debug?ts=${reqTs}${playtestQuerySuffix}`
+            `/api/dev/stats/debug?ts=${reqTs}${contextQuerySuffix}`
           ).catch(() => null)
         : Promise.resolve(null),
     ]);
@@ -462,7 +524,7 @@ const App = () => {
     setLeaderboard(leaderboardRes.leaderboard);
     setDevTime(devTimeRes);
     setDevStatsDebug(devStatsDebugRes);
-  }, [playtestMode, playtestQuerySuffix]);
+  }, [contextQuerySuffix, playtestMode]);
 
   useEffect(() => {
     if (!config) {
@@ -498,7 +560,7 @@ const App = () => {
       try {
         setDebugContextError(null);
         const debugRes = await apiRequest<DebugContextResponse>(
-          `/api/debug/context${playtestPathSuffix}`
+          `/api/debug/context${contextPathSuffix}`
         );
         setDebugContext(debugRes);
       } catch (err) {
@@ -509,7 +571,7 @@ const App = () => {
     };
 
     void run();
-  }, [playtestPathSuffix]);
+  }, [contextPathSuffix]);
 
   useEffect(() => {
     const nextReset = me?.nextResetUtcTimestamp;
@@ -683,7 +745,7 @@ const App = () => {
       try {
         setActionLoading(true);
         setError(null);
-        await apiRequest<DevTimeResponse>(`/api/dev/time${playtestPathSuffix}`, {
+        await apiRequest<DevTimeResponse>(`/api/dev/time${contextPathSuffix}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ devTimeOffsetSeconds: nextOffset }),
@@ -697,7 +759,7 @@ const App = () => {
         setActionLoading(false);
       }
     },
-    [devTime?.devTimeOffsetSeconds, playtestPathSuffix, refreshAfterAction]
+    [contextPathSuffix, devTime?.devTimeOffsetSeconds, refreshAfterAction]
   );
 
   const onSetDevTimeOffset = useCallback(
@@ -705,7 +767,7 @@ const App = () => {
       try {
         setActionLoading(true);
         setError(null);
-        await apiRequest<DevTimeResponse>(`/api/dev/time${playtestPathSuffix}`, {
+        await apiRequest<DevTimeResponse>(`/api/dev/time${contextPathSuffix}`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ devTimeOffsetSeconds: nextOffsetSeconds }),
@@ -719,14 +781,14 @@ const App = () => {
         setActionLoading(false);
       }
     },
-    [playtestPathSuffix, refreshAfterAction]
+    [contextPathSuffix, refreshAfterAction]
   );
 
   const onRunBoundaryStress = useCallback(async () => {
     try {
       setActionLoading(true);
       setError(null);
-      const result = await apiRequest<DevStressResponse>(`/api/dev/stress${playtestPathSuffix}`, {
+      const result = await apiRequest<DevStressResponse>(`/api/dev/stress${contextPathSuffix}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -741,7 +803,7 @@ const App = () => {
     } finally {
       setActionLoading(false);
     }
-  }, [playtestPathSuffix, refreshAfterAction]);
+  }, [contextPathSuffix, refreshAfterAction]);
 
   const onRepairTodayStats = useCallback(async () => {
     try {
@@ -777,7 +839,7 @@ const App = () => {
       setActionLoading(true);
       setError(null);
       setDevNotice(null);
-      const result = await apiRequest<DevResetResponse>(`/api/dev/reset${playtestPathSuffix}`, {
+      const result = await apiRequest<DevResetResponse>(`/api/dev/reset${contextPathSuffix}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
       });
@@ -794,7 +856,7 @@ const App = () => {
     } finally {
       setActionLoading(false);
     }
-  }, [playtestPathSuffix, refreshAfterAction, resetConfirmArmed]);
+  }, [contextPathSuffix, refreshAfterAction, resetConfirmArmed]);
 
   const onLoadTemplateDefaults = useCallback(() => {
     const selected = templates.find((template) => template.id === configTemplateId);
@@ -1044,14 +1106,16 @@ const App = () => {
         isModeratorComputed:{' '}
         {debugContext?.isModeratorComputed === true ? 'true' : 'false'}
       </div>
-      <div>playtestDetectedClient: {playtestMode ? 'true' : 'false'}</div>
+      <div>isPlaytestClient: {playtestMode ? 'true' : 'false'}</div>
       <div>
-        playtestDetectedServer:{' '}
-        {debugContext?.playtestDetectedServer === true ? 'true' : 'false'}
+        isPlaytestServer: {debugContext?.isPlaytestServer === true ? 'true' : 'false'}
+      </div>
+      <div>
+        parsedContextSubredditName:{' '}
+        {debugContext?.parsedContextSubredditName ?? 'null'}
       </div>
       <div className="break-all">window.location.href: {currentHref}</div>
       <div className="break-all">requestUrl: {debugContext?.requestUrl ?? '(loading)'}</div>
-      <div>requestPlaytestQuery: {debugContext?.requestPlaytestQuery ?? 'null'}</div>
       {debugContextError && (
         <div className="mt-1 text-rose-700">debugContextError: {debugContextError}</div>
       )}

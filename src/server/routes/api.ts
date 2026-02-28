@@ -103,10 +103,96 @@ const requireUserId = (): string => {
   return context.userId;
 };
 
+type WebviewContextData = {
+  subredditName: string | null;
+};
+
+const parseWebviewContextData = (rawContext: string | null): WebviewContextData | null => {
+  if (!rawContext) {
+    return null;
+  }
+
+  const candidates = [rawContext];
+  try {
+    const decoded = decodeURIComponent(rawContext);
+    if (decoded !== rawContext) {
+      candidates.push(decoded);
+    }
+  } catch {
+    // Ignore malformed encoding and keep raw context.
+  }
+
+  for (const candidate of candidates) {
+    try {
+      const parsed = JSON.parse(candidate);
+      if (typeof parsed !== 'object' || parsed === null) {
+        continue;
+      }
+
+      const subredditName =
+        'subredditName' in parsed && typeof parsed.subredditName === 'string'
+          ? parsed.subredditName
+          : null;
+      return { subredditName };
+    } catch {
+      // Try next parse candidate.
+    }
+  }
+
+  return null;
+};
+
+const isPlaytestSubredditName = (subredditName: string | null): boolean => {
+  if (!subredditName) {
+    return false;
+  }
+  const normalized = subredditName.trim().toLowerCase();
+  return normalized === 'streak_club_dev' || normalized.endsWith('_dev');
+};
+
+const getContextSubredditName = (): string | null => {
+  if (context.subredditName) {
+    return context.subredditName;
+  }
+
+  if (
+    typeof context === 'object' &&
+    context !== null &&
+    'subreddit' in context &&
+    typeof context.subreddit === 'object' &&
+    context.subreddit !== null &&
+    'name' in context.subreddit &&
+    typeof context.subreddit.name === 'string'
+  ) {
+    return context.subreddit.name;
+  }
+
+  return null;
+};
+
+const getServerPlaytestInfo = (
+  req: HonoContext['req']
+): {
+  isPlaytestServer: boolean;
+  contextSubredditName: string | null;
+  parsedContextSubredditName: string | null;
+} => {
+  const contextSubredditName = getContextSubredditName();
+  const rawContextParam = req.query('context') ?? null;
+  const parsedContextSubredditName =
+    parseWebviewContextData(rawContextParam)?.subredditName ?? null;
+  const effectiveSubredditName = contextSubredditName ?? parsedContextSubredditName;
+
+  return {
+    isPlaytestServer: isPlaytestSubredditName(effectiveSubredditName),
+    contextSubredditName,
+    parsedContextSubredditName,
+  };
+};
+
 const assertPlaytest = (req: HonoContext['req']): void => {
-  const fromQuery = req.query('playtest');
-  const fromHeader = req.header('x-playtest');
-  if (fromQuery === '1' || fromHeader === '1') {
+  const { isPlaytestServer } = getServerPlaytestInfo(req);
+  if (isPlaytestServer) {
     return;
   }
 
@@ -516,23 +602,19 @@ api.get('/me', async (c) => {
 
 api.get('/debug/context', async (c) => {
   const rawUsername = context.username ?? null;
-  const subredditName = context.subredditName ?? null;
+  const { isPlaytestServer, contextSubredditName, parsedContextSubredditName } =
+    getServerPlaytestInfo(c.req);
   const requestUrl = c.req.url;
-  const requestPlaytestQuery = c.req.query('playtest') ?? null;
-  const requestPlaytestHeader = c.req.header('x-playtest') ?? null;
-  const playtestDetectedServer =
-    requestPlaytestQuery === '1' || requestPlaytestHeader === '1';
   const isModeratorComputed = await isModerator(context);
 
   return c.json({
     status: 'ok',
     rawUsername,
-    subredditName,
+    subredditName: contextSubredditName,
+    parsedContextSubredditName,
     requestUrl,
-    requestPlaytestQuery,
-    requestPlaytestHeader,
     isModeratorComputed,
-    playtestDetectedServer,
+    isPlaytestServer,
   });
 });
 
