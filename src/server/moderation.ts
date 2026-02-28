@@ -13,16 +13,6 @@ type ContextLike = {
   };
 };
 
-export type ModeratorCheckDebug = {
-  usernameUsed: string | null;
-  subredditNameUsed: string | null;
-  subredditIdUsed: string | null;
-  apiMethod: string;
-  moderatorsReturned: number;
-  usernameMatched: boolean;
-  error: string | null;
-};
-
 const normalizeNonEmpty = (value: unknown): string | null => {
   if (typeof value !== 'string') {
     return null;
@@ -87,24 +77,19 @@ const resolveSubredditName = async (ctx: unknown): Promise<{
   }
 };
 
-export const getModeratorCheckDebug = async (
+const runModeratorCheck = async (
   ctx: unknown
-): Promise<ModeratorCheckDebug> => {
+): Promise<{
+  username: string | null;
+  subredditName: string | null;
+  subredditId: string | null;
+  isMatch: boolean;
+}> => {
   const username = await resolveUsername(ctx);
   const { subredditName, subredditId } = await resolveSubredditName(ctx);
-  const debug: ModeratorCheckDebug = {
-    usernameUsed: username,
-    subredditNameUsed: subredditName,
-    subredditIdUsed: subredditId,
-    apiMethod: 'reddit.getModerators({ subredditName, username }).all()',
-    moderatorsReturned: 0,
-    usernameMatched: false,
-    error: null,
-  };
 
   if (!username || !subredditName) {
-    debug.error = 'MISSING_CONTEXT_IDENTIFIERS';
-    return debug;
+    return { username, subredditName, subredditId, isMatch: false };
   }
 
   try {
@@ -115,23 +100,20 @@ export const getModeratorCheckDebug = async (
       })
       .all();
     const normalized = username.toLowerCase();
-    const matched = moderators.some(
+    const isMatch = moderators.some(
       (mod) => mod.username.toLowerCase() === normalized
     );
-    debug.moderatorsReturned = moderators.length;
-    debug.usernameMatched = matched;
-    return debug;
+    return { username, subredditName, subredditId, isMatch };
   } catch (error) {
     const message = error instanceof Error ? error.message : 'unknown error';
-    debug.error = message;
     console.warn(
       `[moderation] failed to verify moderator username=${username} subreddit=${subredditName} subredditId=${subredditId ?? 'null'} error=${message}`
     );
-    return debug;
+    return { username, subredditName, subredditId, isMatch: false };
   }
 };
 
 export const isModerator = async (ctx: unknown): Promise<boolean> => {
-  const debug = await getModeratorCheckDebug(ctx);
-  return debug.usernameMatched;
+  const result = await runModeratorCheck(ctx);
+  return result.isMatch;
 };

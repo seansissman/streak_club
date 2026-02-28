@@ -75,25 +75,6 @@ type MeResponse = {
   isModerator: boolean;
 };
 
-type DebugContextResponse = {
-  status: 'ok';
-  rawUsername: string | null;
-  subredditName: string | null;
-  parsedContextSubredditName: string | null;
-  requestUrl: string;
-  isModeratorComputed: boolean;
-  isPlaytestServer: boolean;
-  moderatorDebug?: {
-    usernameUsed: string | null;
-    subredditNameUsed: string | null;
-    subredditIdUsed: string | null;
-    apiMethod: string;
-    moderatorsReturned: number;
-    usernameMatched: boolean;
-    error: string | null;
-  };
-};
-
 type LeaderboardResponse = {
   status: 'ok';
   leaderboard: Array<{
@@ -477,8 +458,6 @@ const App = () => {
   );
   const [checkInFeedback, setCheckInFeedback] = useState<CheckInFeedback | null>(null);
   const [showCheckInCelebration, setShowCheckInCelebration] = useState(false);
-  const [debugContext, setDebugContext] = useState<DebugContextResponse | null>(null);
-  const [debugContextError, setDebugContextError] = useState<string | null>(null);
   const rawWebviewContextParam =
     typeof window !== 'undefined'
       ? new URLSearchParams(window.location.search).get('context')
@@ -493,8 +472,6 @@ const App = () => {
   const contextPathSuffix = rawWebviewContextParam
     ? `?context=${encodeURIComponent(rawWebviewContextParam)}`
     : '';
-  const currentHref =
-    typeof window !== 'undefined' ? window.location.href : '(window unavailable)';
 
   const loadAll = useCallback(async () => {
     const reqTs = Date.now();
@@ -563,24 +540,6 @@ const App = () => {
 
     void run();
   }, [loadAll]);
-
-  useEffect(() => {
-    const run = async () => {
-      try {
-        setDebugContextError(null);
-        const debugRes = await apiRequest<DebugContextResponse>(
-          `/api/debug/context${contextPathSuffix}`
-        );
-        setDebugContext(debugRes);
-      } catch (err) {
-        const message =
-          err instanceof Error ? err.message : 'Failed to load debug context';
-        setDebugContextError(message);
-      }
-    };
-
-    void run();
-  }, [contextPathSuffix]);
 
   useEffect(() => {
     const nextReset = me?.nextResetUtcTimestamp;
@@ -1104,60 +1063,9 @@ const App = () => {
     );
   };
 
-  const renderTempDebugBanner = () => (
-    <aside className="fixed right-3 top-3 z-[9999] max-w-md rounded-lg border-2 border-rose-600 bg-white p-3 text-xs shadow-lg">
-      <div className="mb-1 text-base font-black text-rose-700">
-        TEMP DEBUG - REMOVE
-      </div>
-      <div>rawUsername: {debugContext?.rawUsername ?? 'null'}</div>
-      <div>subredditName: {debugContext?.subredditName ?? 'null'}</div>
-      <div>
-        isModeratorComputed:{' '}
-        {debugContext?.isModeratorComputed === true ? 'true' : 'false'}
-      </div>
-      <div>
-        modCheck.usernameUsed: {debugContext?.moderatorDebug?.usernameUsed ?? 'null'}
-      </div>
-      <div>
-        modCheck.subredditNameUsed:{' '}
-        {debugContext?.moderatorDebug?.subredditNameUsed ?? 'null'}
-      </div>
-      <div>
-        modCheck.subredditIdUsed:{' '}
-        {debugContext?.moderatorDebug?.subredditIdUsed ?? 'null'}
-      </div>
-      <div>
-        modCheck.apiMethod: {debugContext?.moderatorDebug?.apiMethod ?? 'null'}
-      </div>
-      <div>
-        modCheck.moderatorsReturned:{' '}
-        {debugContext?.moderatorDebug?.moderatorsReturned ?? 0}
-      </div>
-      <div>
-        modCheck.usernameMatched:{' '}
-        {debugContext?.moderatorDebug?.usernameMatched === true ? 'true' : 'false'}
-      </div>
-      <div>modCheck.error: {debugContext?.moderatorDebug?.error ?? 'null'}</div>
-      <div>isPlaytestClient: {playtestMode ? 'true' : 'false'}</div>
-      <div>
-        isPlaytestServer: {debugContext?.isPlaytestServer === true ? 'true' : 'false'}
-      </div>
-      <div>
-        parsedContextSubredditName:{' '}
-        {debugContext?.parsedContextSubredditName ?? 'null'}
-      </div>
-      <div className="break-all">window.location.href: {currentHref}</div>
-      <div className="break-all">requestUrl: {debugContext?.requestUrl ?? '(loading)'}</div>
-      {debugContextError && (
-        <div className="mt-1 text-rose-700">debugContextError: {debugContextError}</div>
-      )}
-    </aside>
-  );
-
   if (loading) {
     return (
       <div className="bg-slate-100 text-slate-900 p-6">
-        {renderTempDebugBanner()}
         <div className="max-w-3xl mx-auto">Loading...</div>
       </div>
     );
@@ -1165,7 +1073,6 @@ const App = () => {
 
   return (
     <div className="bg-slate-100 text-slate-900 p-3 sm:p-4">
-      {renderTempDebugBanner()}
       <div className="max-w-3xl mx-auto space-y-3">
         <section className="bg-white rounded-xl p-4 border border-slate-200 space-y-2">
           <h1 className="text-2xl font-bold">{config?.title ?? 'Streak Engine'}</h1>

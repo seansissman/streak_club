@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Context as HonoContext } from 'hono';
 import { context, reddit } from '@devvit/web/server';
-import { getModeratorCheckDebug, isModerator } from '../moderation';
+import { isModerator } from '../moderation';
 import {
   computeNextResetFromDayNumber,
   ensureChallengeConfig,
@@ -253,10 +253,6 @@ const requireModerator = async (): Promise<{ username: string }> => {
   }
 
   return { username };
-};
-
-const requireDevToolsAccess = async (): Promise<void> => {
-  // Temporary: keep dev tools universally accessible for testing.
 };
 
 const logStress = (label: string, data: Record<string, unknown>): void => {
@@ -600,52 +596,12 @@ api.get('/me', async (c) => {
   }
 });
 
-api.get('/debug/context', async (c) => {
-  const rawUsername = context.username ?? null;
-  const { isPlaytestServer, contextSubredditName, parsedContextSubredditName } =
-    getServerPlaytestInfo(c.req);
-  const requestUrl = c.req.url;
-  const moderatorDebug = await getModeratorCheckDebug(context);
-  const isModeratorComputed = moderatorDebug.usernameMatched;
-
-  return c.json({
-    status: 'ok',
-    rawUsername,
-    subredditName: contextSubredditName,
-    parsedContextSubredditName,
-    requestUrl,
-    isModeratorComputed,
-    isPlaytestServer,
-    moderatorDebug,
-  });
-});
-
 api.get('/dev/time', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
     try {
       assertPlaytest(c.req);
-      await requireDevToolsAccess();
     } catch (error) {
-      if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
-        return jsonError(
-          c,
-          401,
-          'AUTH_REQUIRED',
-          'You must be logged in to view dev time settings'
-        );
-      }
-      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
-        return jsonError(
-          c,
-          403,
-          'MODERATOR_REQUIRED',
-          'Only moderators can view dev time settings'
-        );
-      }
-      if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
-        return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
-      }
       if (error instanceof Error && error.message === 'PLAYTEST_REQUIRED') {
         return jsonError(c, 403, 'PLAYTEST_REQUIRED', 'Dev tools are available only in playtest.');
       }
@@ -677,27 +633,7 @@ api.post('/dev/time', async (c) => {
     const { subredditId } = requireSubredditContext();
     try {
       assertPlaytest(c.req);
-      await requireDevToolsAccess();
     } catch (error) {
-      if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
-        return jsonError(
-          c,
-          401,
-          'AUTH_REQUIRED',
-          'You must be logged in to update dev time settings'
-        );
-      }
-      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
-        return jsonError(
-          c,
-          403,
-          'MODERATOR_REQUIRED',
-          'Only moderators can update dev time settings'
-        );
-      }
-      if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
-        return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
-      }
       if (error instanceof Error && error.message === 'PLAYTEST_REQUIRED') {
         return jsonError(c, 403, 'PLAYTEST_REQUIRED', 'Dev tools are available only in playtest.');
       }
@@ -749,27 +685,7 @@ api.post('/dev/reset', async (c) => {
     const userId = requireUserId();
     try {
       assertPlaytest(c.req);
-      await requireDevToolsAccess();
     } catch (error) {
-      if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
-        return jsonError(
-          c,
-          401,
-          'AUTH_REQUIRED',
-          'You must be logged in to reset dev test data'
-        );
-      }
-      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
-        return jsonError(
-          c,
-          403,
-          'MODERATOR_REQUIRED',
-          'Only moderators can reset dev test data'
-        );
-      }
-      if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
-        return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
-      }
       if (error instanceof Error && error.message === 'PLAYTEST_REQUIRED') {
         return jsonError(c, 403, 'PLAYTEST_REQUIRED', 'Dev tools are available only in playtest.');
       }
@@ -805,27 +721,7 @@ api.post('/dev/stress', async (c) => {
     const { subredditId } = requireSubredditContext();
     try {
       assertPlaytest(c.req);
-      await requireDevToolsAccess();
     } catch (error) {
-      if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
-        return jsonError(
-          c,
-          401,
-          'AUTH_REQUIRED',
-          'You must be logged in to run UTC reset stress tests'
-        );
-      }
-      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
-        return jsonError(
-          c,
-          403,
-          'MODERATOR_REQUIRED',
-          'Only moderators can run UTC reset stress tests'
-        );
-      }
-      if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
-        return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
-      }
       if (error instanceof Error && error.message === 'PLAYTEST_REQUIRED') {
         return jsonError(c, 403, 'PLAYTEST_REQUIRED', 'Dev tools are available only in playtest.');
       }
@@ -1077,27 +973,7 @@ api.get('/dev/stats/debug', async (c) => {
     const { subredditId } = requireSubredditContext();
     try {
       assertPlaytest(c.req);
-      await requireDevToolsAccess();
     } catch (error) {
-      if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
-        return jsonError(
-          c,
-          401,
-          'AUTH_REQUIRED',
-          'You must be logged in to view stats debug snapshot'
-        );
-      }
-      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
-        return jsonError(
-          c,
-          403,
-          'MODERATOR_REQUIRED',
-          'Only moderators can view stats debug snapshot'
-        );
-      }
-      if (error instanceof Error && error.message === 'DEV_MODE_DISABLED') {
-        return jsonError(c, 403, 'DEV_MODE_DISABLED', 'Dev mode is disabled.');
-      }
       if (error instanceof Error && error.message === 'PLAYTEST_REQUIRED') {
         return jsonError(c, 403, 'PLAYTEST_REQUIRED', 'Dev tools are available only in playtest.');
       }
