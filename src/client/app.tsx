@@ -75,6 +75,17 @@ type MeResponse = {
   isModerator: boolean;
 };
 
+type DebugContextResponse = {
+  status: 'ok';
+  rawUsername: string | null;
+  subredditName: string | null;
+  requestUrl: string;
+  requestPlaytestQuery: string | null;
+  requestPlaytestHeader: string | null;
+  isModeratorComputed: boolean;
+  playtestDetectedServer: boolean;
+};
+
 type LeaderboardResponse = {
   status: 'ok';
   leaderboard: Array<{
@@ -406,9 +417,13 @@ const App = () => {
   );
   const [checkInFeedback, setCheckInFeedback] = useState<CheckInFeedback | null>(null);
   const [showCheckInCelebration, setShowCheckInCelebration] = useState(false);
+  const [debugContext, setDebugContext] = useState<DebugContextResponse | null>(null);
+  const [debugContextError, setDebugContextError] = useState<string | null>(null);
   const playtestMode = isPlaytestClient();
   const playtestQuerySuffix = playtestMode ? '&playtest=1' : '';
   const playtestPathSuffix = playtestMode ? '?playtest=1' : '';
+  const currentHref =
+    typeof window !== 'undefined' ? window.location.href : '(window unavailable)';
 
   const loadAll = useCallback(async () => {
     const reqTs = Date.now();
@@ -477,6 +492,24 @@ const App = () => {
 
     void run();
   }, [loadAll]);
+
+  useEffect(() => {
+    const run = async () => {
+      try {
+        setDebugContextError(null);
+        const debugRes = await apiRequest<DebugContextResponse>(
+          `/api/debug/context${playtestPathSuffix}`
+        );
+        setDebugContext(debugRes);
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to load debug context';
+        setDebugContextError(message);
+      }
+    };
+
+    void run();
+  }, [playtestPathSuffix]);
 
   useEffect(() => {
     const nextReset = me?.nextResetUtcTimestamp;
@@ -1000,9 +1033,35 @@ const App = () => {
     );
   };
 
+  const renderTempDebugBanner = () => (
+    <aside className="fixed right-3 top-3 z-[9999] max-w-md rounded-lg border-2 border-rose-600 bg-white p-3 text-xs shadow-lg">
+      <div className="mb-1 text-base font-black text-rose-700">
+        TEMP DEBUG - REMOVE
+      </div>
+      <div>rawUsername: {debugContext?.rawUsername ?? 'null'}</div>
+      <div>subredditName: {debugContext?.subredditName ?? 'null'}</div>
+      <div>
+        isModeratorComputed:{' '}
+        {debugContext?.isModeratorComputed === true ? 'true' : 'false'}
+      </div>
+      <div>playtestDetectedClient: {playtestMode ? 'true' : 'false'}</div>
+      <div>
+        playtestDetectedServer:{' '}
+        {debugContext?.playtestDetectedServer === true ? 'true' : 'false'}
+      </div>
+      <div className="break-all">window.location.href: {currentHref}</div>
+      <div className="break-all">requestUrl: {debugContext?.requestUrl ?? '(loading)'}</div>
+      <div>requestPlaytestQuery: {debugContext?.requestPlaytestQuery ?? 'null'}</div>
+      {debugContextError && (
+        <div className="mt-1 text-rose-700">debugContextError: {debugContextError}</div>
+      )}
+    </aside>
+  );
+
   if (loading) {
     return (
       <div className="bg-slate-100 text-slate-900 p-6">
+        {renderTempDebugBanner()}
         <div className="max-w-3xl mx-auto">Loading...</div>
       </div>
     );
@@ -1010,6 +1069,7 @@ const App = () => {
 
   return (
     <div className="bg-slate-100 text-slate-900 p-3 sm:p-4">
+      {renderTempDebugBanner()}
       <div className="max-w-3xl mx-auto space-y-3">
         <section className="bg-white rounded-xl p-4 border border-slate-200 space-y-2">
           <h1 className="text-2xl font-bold">{config?.title ?? 'Streak Engine'}</h1>

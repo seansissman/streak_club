@@ -514,6 +514,28 @@ api.get('/me', async (c) => {
   }
 });
 
+api.get('/debug/context', async (c) => {
+  const rawUsername = context.username ?? null;
+  const subredditName = context.subredditName ?? null;
+  const requestUrl = c.req.url;
+  const requestPlaytestQuery = c.req.query('playtest') ?? null;
+  const requestPlaytestHeader = c.req.header('x-playtest') ?? null;
+  const playtestDetectedServer =
+    requestPlaytestQuery === '1' || requestPlaytestHeader === '1';
+  const isModeratorComputed = await isModerator(context);
+
+  return c.json({
+    status: 'ok',
+    rawUsername,
+    subredditName,
+    requestUrl,
+    requestPlaytestQuery,
+    requestPlaytestHeader,
+    isModeratorComputed,
+    playtestDetectedServer,
+  });
+});
+
 api.get('/dev/time', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
