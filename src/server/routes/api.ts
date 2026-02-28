@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { Context as HonoContext } from 'hono';
 import { context, reddit } from '@devvit/web/server';
-import { isModerator } from '../moderation';
+import { getModeratorCheckDebug, isModerator } from '../moderation';
 import {
   computeNextResetFromDayNumber,
   ensureChallengeConfig,
@@ -605,7 +605,8 @@ api.get('/debug/context', async (c) => {
   const { isPlaytestServer, contextSubredditName, parsedContextSubredditName } =
     getServerPlaytestInfo(c.req);
   const requestUrl = c.req.url;
-  const isModeratorComputed = await isModerator(context);
+  const moderatorDebug = await getModeratorCheckDebug(context);
+  const isModeratorComputed = moderatorDebug.usernameMatched;
 
   return c.json({
     status: 'ok',
@@ -615,6 +616,7 @@ api.get('/debug/context', async (c) => {
     requestUrl,
     isModeratorComputed,
     isPlaytestServer,
+    moderatorDebug,
   });
 });
 

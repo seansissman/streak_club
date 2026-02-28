@@ -83,6 +83,15 @@ type DebugContextResponse = {
   requestUrl: string;
   isModeratorComputed: boolean;
   isPlaytestServer: boolean;
+  moderatorDebug?: {
+    usernameUsed: string | null;
+    subredditNameUsed: string | null;
+    subredditIdUsed: string | null;
+    apiMethod: string;
+    moderatorsReturned: number;
+    usernameMatched: boolean;
+    error: string | null;
+  };
 };
 
 type LeaderboardResponse = {
@@ -1106,6 +1115,29 @@ const App = () => {
         isModeratorComputed:{' '}
         {debugContext?.isModeratorComputed === true ? 'true' : 'false'}
       </div>
+      <div>
+        modCheck.usernameUsed: {debugContext?.moderatorDebug?.usernameUsed ?? 'null'}
+      </div>
+      <div>
+        modCheck.subredditNameUsed:{' '}
+        {debugContext?.moderatorDebug?.subredditNameUsed ?? 'null'}
+      </div>
+      <div>
+        modCheck.subredditIdUsed:{' '}
+        {debugContext?.moderatorDebug?.subredditIdUsed ?? 'null'}
+      </div>
+      <div>
+        modCheck.apiMethod: {debugContext?.moderatorDebug?.apiMethod ?? 'null'}
+      </div>
+      <div>
+        modCheck.moderatorsReturned:{' '}
+        {debugContext?.moderatorDebug?.moderatorsReturned ?? 0}
+      </div>
+      <div>
+        modCheck.usernameMatched:{' '}
+        {debugContext?.moderatorDebug?.usernameMatched === true ? 'true' : 'false'}
+      </div>
+      <div>modCheck.error: {debugContext?.moderatorDebug?.error ?? 'null'}</div>
       <div>isPlaytestClient: {playtestMode ? 'true' : 'false'}</div>
       <div>
         isPlaytestServer: {debugContext?.isPlaytestServer === true ? 'true' : 'false'}
