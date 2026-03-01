@@ -2,6 +2,7 @@ import { Hono } from 'hono';
 import type { Context as HonoContext } from 'hono';
 import { context, reddit } from '@devvit/web/server';
 import { isModerator } from '../moderation';
+import { isStagingSubreddit } from '../core/staging_lock';
 import {
   computeNextResetFromDayNumber,
   ensureChallengeConfig,
@@ -275,17 +276,23 @@ export const api = new Hono();
 api.get('/config', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
+    const isStaging = isStagingSubreddit(context);
     const utcNow = await getUtcNow(subredditId);
     const today = utcNow.utcDayNumber;
     const config = await getChallengeConfig(subredditId);
-    const testingMode = await getTestingMode(subredditId);
+    const testingMode = isStaging ? await getTestingMode(subredditId) : false;
+    const testingDevTimeOffsetSeconds = isStaging
+      ? await getDevTimeOffsetSeconds(subredditId)
+      : 0;
     const stats = await getChallengeStats(subredditId, today);
     const configNeedsSetup = isConfigSetupRequired(config);
 
     return c.json({
       status: 'ok',
       config,
+      isStaging,
       testingMode,
+      testingDevTimeOffsetSeconds,
       configNeedsSetup,
       stats,
     });
@@ -983,6 +990,14 @@ api.post('/dev/stats/repair', async (c) => {
 api.post('/mod/testing-mode', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
+    if (!isStagingSubreddit(context)) {
+      return jsonError(
+        c,
+        403,
+        'STAGING_ONLY',
+        'Staging test mode is restricted to the staging subreddit'
+      );
+    }
     try {
       await requireModerator();
     } catch (error) {
@@ -1018,9 +1033,14 @@ api.post('/mod/testing-mode', async (c) => {
     }
 
     const testingMode = await setTestingMode(subredditId, body.enabled);
+    if (!testingMode) {
+      await setDevTimeOffsetSeconds(subredditId, 0);
+    }
+    const devTimeOffsetSeconds = await getDevTimeOffsetSeconds(subredditId);
     return c.json({
       status: 'ok',
       testingMode,
+      devTimeOffsetSeconds,
     });
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
@@ -1031,6 +1051,14 @@ api.post('/mod/testing-mode', async (c) => {
 api.post('/mod/testing/advance', async (c) => {
   try {
     const { subredditId } = requireSubredditContext();
+    if (!isStagingSubreddit(context)) {
+      return jsonError(
+        c,
+        403,
+        'STAGING_ONLY',
+        'Staging rollover simulation is restricted to the staging subreddit'
+      );
+    }
     try {
       await requireModerator();
     } catch (error) {
@@ -1099,6 +1127,54 @@ api.post('/mod/testing/advance', async (c) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return jsonError(c, 400, 'TESTING_ADVANCE_FAILED', message);
+  }
+});
+
+api.post('/mod/testing/reset-offset', async (c) => {
+  try {
+    const { subredditId } = requireSubredditContext();
+    if (!isStagingSubreddit(context)) {
+      return jsonError(
+        c,
+        403,
+        'STAGING_ONLY',
+        'Offset reset is restricted to the staging subreddit'
+      );
+    }
+    try {
+      await requireModerator();
+    } catch (error) {
+      if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
+        return jsonError(
+          c,
+          401,
+          'AUTH_REQUIRED',
+          'You must be logged in to reset staging time offset'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can reset staging time offset'
+        );
+      }
+      throw error;
+    }
+
+    const devTimeOffsetSeconds = await setDevTimeOffsetSeconds(subredditId, 0);
+    const utcNow = await getUtcNow(subredditId);
+    return c.json({
+      status: 'ok',
+      devTimeOffsetSeconds,
+      simulatedUtcNow: new Date(utcNow.utcMs).toISOString(),
+      simulatedUtcDayNumber: utcNow.utcDayNumber,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return jsonError(c, 400, 'TESTING_RESET_OFFSET_FAILED', message);
   }
 });
 
