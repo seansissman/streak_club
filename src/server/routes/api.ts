@@ -7,6 +7,7 @@ import {
   ensureChallengeConfig,
   getChallengeConfig,
   getDevTimeOffsetSeconds,
+  getTestingMode,
   getUtcNow,
   getParticipantCount,
   getChallengeStats,
@@ -22,6 +23,7 @@ import {
   resetChallengeProgress,
   setChallengeConfig,
   setDevTimeOffsetSeconds,
+  setTestingMode,
   storeUsername,
   getStoredUsernames,
   setUserState,
@@ -66,6 +68,14 @@ type PrivacyRequest = {
 
 type DevTimeRequest = {
   devTimeOffsetSeconds?: number;
+};
+
+type TestingModeRequest = {
+  enabled?: boolean;
+};
+
+type TestingAdvanceRequest = {
+  daysToAdvance?: number;
 };
 
 type DevStressReport = {
@@ -268,12 +278,14 @@ api.get('/config', async (c) => {
     const utcNow = await getUtcNow(subredditId);
     const today = utcNow.utcDayNumber;
     const config = await getChallengeConfig(subredditId);
+    const testingMode = await getTestingMode(subredditId);
     const stats = await getChallengeStats(subredditId, today);
     const configNeedsSetup = isConfigSetupRequired(config);
 
     return c.json({
       status: 'ok',
       config,
+      testingMode,
       configNeedsSetup,
       stats,
     });
@@ -965,6 +977,128 @@ api.post('/dev/stats/repair', async (c) => {
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Unknown error';
     return jsonError(c, 400, 'DEV_STATS_REPAIR_FAILED', message);
+  }
+});
+
+api.post('/mod/testing-mode', async (c) => {
+  try {
+    const { subredditId } = requireSubredditContext();
+    try {
+      await requireModerator();
+    } catch (error) {
+      if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
+        return jsonError(
+          c,
+          401,
+          'AUTH_REQUIRED',
+          'You must be logged in to update staging test mode'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can update staging test mode'
+        );
+      }
+      throw error;
+    }
+
+    const body = await c.req
+      .json<TestingModeRequest>()
+      .catch(() => ({} as TestingModeRequest));
+    if (typeof body.enabled !== 'boolean') {
+      return jsonError(
+        c,
+        400,
+        'INVALID_TESTING_MODE',
+        'enabled must be a boolean'
+      );
+    }
+
+    const testingMode = await setTestingMode(subredditId, body.enabled);
+    return c.json({
+      status: 'ok',
+      testingMode,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return jsonError(c, 400, 'TESTING_MODE_UPDATE_FAILED', message);
+  }
+});
+
+api.post('/mod/testing/advance', async (c) => {
+  try {
+    const { subredditId } = requireSubredditContext();
+    try {
+      await requireModerator();
+    } catch (error) {
+      if (error instanceof Error && error.message === 'AUTH_REQUIRED') {
+        return jsonError(
+          c,
+          401,
+          'AUTH_REQUIRED',
+          'You must be logged in to run staging rollover simulation'
+        );
+      }
+      if (error instanceof Error && error.message === 'MODERATOR_REQUIRED') {
+        return jsonError(
+          c,
+          403,
+          'MODERATOR_REQUIRED',
+          'Only moderators can run staging rollover simulation'
+        );
+      }
+      throw error;
+    }
+
+    const testingMode = await getTestingMode(subredditId);
+    if (!testingMode) {
+      return jsonError(
+        c,
+        403,
+        'TESTING_MODE_REQUIRED',
+        'Enable staging test mode before running rollover simulation'
+      );
+    }
+
+    const body = await c.req
+      .json<TestingAdvanceRequest>()
+      .catch(() => ({} as TestingAdvanceRequest));
+    if (body.daysToAdvance !== 1 && body.daysToAdvance !== 7) {
+      return jsonError(
+        c,
+        400,
+        'INVALID_DAYS_TO_ADVANCE',
+        'daysToAdvance must be 1 or 7'
+      );
+    }
+
+    const currentOffsetSeconds = await getDevTimeOffsetSeconds(subredditId);
+    const nextOffsetSeconds =
+      currentOffsetSeconds + body.daysToAdvance * 86_400;
+    await setDevTimeOffsetSeconds(subredditId, nextOffsetSeconds);
+
+    const utcNow = await getUtcNow(subredditId);
+    const repair = await repairTodayStats(subredditId, utcNow.utcDayNumber);
+
+    return c.json({
+      status: 'ok',
+      daysToAdvance: body.daysToAdvance,
+      newTodayKey: `today:${subredditId}:${String(utcNow.utcDayNumber)}`,
+      checkinsToday: repair.newStats.checkinsToday,
+      freezeTokensUpdated: 0,
+      freezeTokensNote:
+        'Freeze token accrual is evaluated during check-in using existing logic.',
+      simulatedUtcNow: new Date(utcNow.utcMs).toISOString(),
+      simulatedUtcDayNumber: utcNow.utcDayNumber,
+      devTimeOffsetSeconds: nextOffsetSeconds,
+      timestamp: new Date().toISOString(),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return jsonError(c, 400, 'TESTING_ADVANCE_FAILED', message);
   }
 });
 

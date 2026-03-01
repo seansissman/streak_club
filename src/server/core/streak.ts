@@ -90,6 +90,7 @@ export type ChallengeStats = AggregateStats;
 
 export const keys = {
   challengeConfig: (subredditId: string): string => `cfg:${subredditId}`,
+  testingMode: (subredditId: string): string => `sc:${subredditId}:testingMode`,
   userState: (subredditId: string, userId: string): string =>
     `user:${subredditId}:${userId}`,
   participants: (subredditId: string): string => `participants:${subredditId}`,
@@ -101,6 +102,22 @@ export const keys = {
   rateLimit: (subredditId: string, userId: string): string =>
     `rl:${subredditId}:${userId}`,
   devSettings: (subredditId: string): string => `dev:${subredditId}`,
+};
+
+export const getTestingMode = async (subredditId: string): Promise<boolean> => {
+  const stored = await redis.get(keys.testingMode(subredditId));
+  if (!stored) {
+    return false;
+  }
+  return stored === 'on';
+};
+
+export const setTestingMode = async (
+  subredditId: string,
+  enabled: boolean
+): Promise<boolean> => {
+  await redis.set(keys.testingMode(subredditId), enabled ? 'on' : 'off');
+  return enabled;
 };
 
 const updateChallengeStats = async (
@@ -633,6 +650,7 @@ export const setUserState = async (
 export const resetChallengeProgress = async (
   subredditId: string
 ): Promise<{ stateGeneration: number }> => {
+  const today = utcDayNumber(new Date());
   const stateGeneration = await redis.hIncrBy(
     keys.devSettings(subredditId),
     STATE_GENERATION_FIELD,
@@ -646,7 +664,8 @@ export const resetChallengeProgress = async (
     keys.leaderboard(subredditId),
     keys.usernames(subredditId),
     keys.challengeStats(subredditId),
-    keys.participants(subredditId)
+    keys.participants(subredditId),
+    keys.todayCheckins(subredditId, today)
   );
 
   return { stateGeneration };
