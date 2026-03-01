@@ -56,6 +56,7 @@ type UserState = {
 type ConfigResponse = {
   status: 'ok';
   config: ChallengeConfig;
+  testingMode?: boolean;
   configNeedsSetup?: boolean;
   stats: {
     participantsTotal: number;
@@ -160,6 +161,24 @@ type DevStatsDebugResponse = {
   checkinsAllTime: number;
   longestStreakAllTime: number;
   todaySetSize: number;
+};
+
+type TestingModeResponse = {
+  status: 'ok';
+  testingMode: boolean;
+};
+
+type TestingAdvanceResponse = {
+  status: 'ok';
+  daysToAdvance: number;
+  newTodayKey: string;
+  checkinsToday: number;
+  freezeTokensUpdated: number;
+  freezeTokensNote: string;
+  simulatedUtcNow: string;
+  simulatedUtcDayNumber: number;
+  devTimeOffsetSeconds: number;
+  timestamp: string;
 };
 
 type CheckInResponse = {
@@ -432,6 +451,7 @@ const App = () => {
   const [longestStreakAllTime, setLongestStreakAllTime] = useState(0);
   const [configNeedsSetup, setConfigNeedsSetup] = useState(false);
   const [templates, setTemplates] = useState<ChallengeTemplate[]>([]);
+  const [testingMode, setTestingModeState] = useState(false);
   const [me, setMe] = useState<MeResponse | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardResponse['leaderboard']>([]);
   const [loading, setLoading] = useState(true);
@@ -500,6 +520,7 @@ const App = () => {
     ]);
 
     setConfig(configRes.config);
+    setTestingModeState(configRes.testingMode === true);
     setConfigNeedsSetup(Boolean(configRes.configNeedsSetup));
     setTemplates(templatesRes.templates);
     setParticipantsTotal(configRes.stats.participantsTotal);
@@ -793,6 +814,63 @@ const App = () => {
       setActionLoading(false);
     }
   }, [refreshAfterAction]);
+
+  const onSetTestingMode = useCallback(
+    async (enabled: boolean) => {
+      try {
+        setActionLoading(true);
+        setError(null);
+        setConfigError(null);
+        const result = await apiRequest<TestingModeResponse>('/api/mod/testing-mode', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled }),
+        });
+        setConfigNotice(
+          `Staging test mode ${result.testingMode ? 'enabled' : 'disabled'}.`
+        );
+        await refreshAfterAction();
+      } catch (err) {
+        const message =
+          err instanceof Error ? err.message : 'Failed to update staging test mode';
+        setConfigError(message);
+      } finally {
+        setActionLoading(false);
+      }
+    },
+    [refreshAfterAction]
+  );
+
+  const onAdvanceTestingDays = useCallback(
+    async (daysToAdvance: 1 | 7) => {
+      try {
+        setActionLoading(true);
+        setError(null);
+        setConfigError(null);
+        const result = await apiRequest<TestingAdvanceResponse>(
+          '/api/mod/testing/advance',
+          {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ daysToAdvance }),
+          }
+        );
+        setConfigNotice(
+          `Simulated +${result.daysToAdvance} day(s). todayKey=${result.newTodayKey}, checkInsToday=${result.checkinsToday}, freezeTokensUpdated=${result.freezeTokensUpdated}.`
+        );
+        await refreshAfterAction();
+      } catch (err) {
+        const message =
+          err instanceof Error
+            ? err.message
+            : 'Failed to run rollover simulation';
+        setConfigError(message);
+      } finally {
+        setActionLoading(false);
+      }
+    },
+    [refreshAfterAction]
+  );
 
   const onResetDevData = useCallback(async () => {
     if (!resetConfirmArmed) {
@@ -1360,6 +1438,38 @@ const App = () => {
               Do not delete the active post; it will break continuity.
             </p>
             <div className="pt-1">
+              <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                <div className="font-medium text-slate-800">Staging test mode</div>
+                <div className="text-slate-600">
+                  Status:{' '}
+                  <span className={testingMode ? 'text-emerald-700' : 'text-slate-700'}>
+                    {testingMode ? 'ON' : 'OFF'}
+                  </span>
+                </div>
+                <div className="mt-2 flex flex-wrap gap-2">
+                  <button
+                    className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                    onClick={() => onSetTestingMode(!testingMode)}
+                    disabled={actionLoading}
+                  >
+                    {testingMode ? 'Disable' : 'Enable'}
+                  </button>
+                  <button
+                    className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                    onClick={() => onAdvanceTestingDays(1)}
+                    disabled={actionLoading || !testingMode}
+                  >
+                    Simulate +1 day
+                  </button>
+                  <button
+                    className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                    onClick={() => onAdvanceTestingDays(7)}
+                    disabled={actionLoading || !testingMode}
+                  >
+                    Simulate +7 days
+                  </button>
+                </div>
+              </div>
               <button
                 className="px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-sm font-medium"
                 onClick={onRepairTodayStats}
