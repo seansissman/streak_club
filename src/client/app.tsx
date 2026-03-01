@@ -56,7 +56,9 @@ type UserState = {
 type ConfigResponse = {
   status: 'ok';
   config: ChallengeConfig;
+  isStaging?: boolean;
   testingMode?: boolean;
+  testingDevTimeOffsetSeconds?: number;
   configNeedsSetup?: boolean;
   stats: {
     participantsTotal: number;
@@ -166,6 +168,7 @@ type DevStatsDebugResponse = {
 type TestingModeResponse = {
   status: 'ok';
   testingMode: boolean;
+  devTimeOffsetSeconds?: number;
 };
 
 type TestingAdvanceResponse = {
@@ -178,6 +181,14 @@ type TestingAdvanceResponse = {
   simulatedUtcNow: string;
   simulatedUtcDayNumber: number;
   devTimeOffsetSeconds: number;
+  timestamp: string;
+};
+
+type TestingResetOffsetResponse = {
+  status: 'ok';
+  devTimeOffsetSeconds: number;
+  simulatedUtcNow: string;
+  simulatedUtcDayNumber: number;
   timestamp: string;
 };
 
@@ -451,7 +462,9 @@ const App = () => {
   const [longestStreakAllTime, setLongestStreakAllTime] = useState(0);
   const [configNeedsSetup, setConfigNeedsSetup] = useState(false);
   const [templates, setTemplates] = useState<ChallengeTemplate[]>([]);
+  const [isStagingConfig, setIsStagingConfig] = useState(false);
   const [testingMode, setTestingModeState] = useState(false);
+  const [testingDevTimeOffsetSeconds, setTestingDevTimeOffsetSeconds] = useState(0);
   const [me, setMe] = useState<MeResponse | null>(null);
   const [leaderboard, setLeaderboard] = useState<LeaderboardResponse['leaderboard']>([]);
   const [loading, setLoading] = useState(true);
@@ -520,7 +533,9 @@ const App = () => {
     ]);
 
     setConfig(configRes.config);
+    setIsStagingConfig(configRes.isStaging === true);
     setTestingModeState(configRes.testingMode === true);
+    setTestingDevTimeOffsetSeconds(configRes.testingDevTimeOffsetSeconds ?? 0);
     setConfigNeedsSetup(Boolean(configRes.configNeedsSetup));
     setTemplates(templatesRes.templates);
     setParticipantsTotal(configRes.stats.participantsTotal);
@@ -829,6 +844,9 @@ const App = () => {
         setConfigNotice(
           `Staging test mode ${result.testingMode ? 'enabled' : 'disabled'}.`
         );
+        if (result.devTimeOffsetSeconds !== undefined) {
+          setTestingDevTimeOffsetSeconds(result.devTimeOffsetSeconds);
+        }
         await refreshAfterAction();
       } catch (err) {
         const message =
@@ -858,6 +876,7 @@ const App = () => {
         setConfigNotice(
           `Simulated +${result.daysToAdvance} day(s). todayKey=${result.newTodayKey}, checkInsToday=${result.checkinsToday}, freezeTokensUpdated=${result.freezeTokensUpdated}.`
         );
+        setTestingDevTimeOffsetSeconds(result.devTimeOffsetSeconds);
         await refreshAfterAction();
       } catch (err) {
         const message =
@@ -871,6 +890,30 @@ const App = () => {
     },
     [refreshAfterAction]
   );
+
+  const onResetTestingOffset = useCallback(async () => {
+    try {
+      setActionLoading(true);
+      setError(null);
+      setConfigError(null);
+      const result = await apiRequest<TestingResetOffsetResponse>(
+        '/api/mod/testing/reset-offset',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+        }
+      );
+      setTestingDevTimeOffsetSeconds(result.devTimeOffsetSeconds);
+      setConfigNotice('Staging time offset reset to 0.');
+      await refreshAfterAction();
+    } catch (err) {
+      const message =
+        err instanceof Error ? err.message : 'Failed to reset staging time offset';
+      setConfigError(message);
+    } finally {
+      setActionLoading(false);
+    }
+  }, [refreshAfterAction]);
 
   const onResetDevData = useCallback(async () => {
     if (!resetConfirmArmed) {
@@ -1438,38 +1481,52 @@ const App = () => {
               Do not delete the active post; it will break continuity.
             </p>
             <div className="pt-1">
-              <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
-                <div className="font-medium text-slate-800">Staging test mode</div>
-                <div className="text-slate-600">
-                  Status:{' '}
-                  <span className={testingMode ? 'text-emerald-700' : 'text-slate-700'}>
-                    {testingMode ? 'ON' : 'OFF'}
-                  </span>
+              {isStagingConfig && (
+                <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                  <div className="font-medium text-slate-800">
+                    Staging test mode (staging subreddit only)
+                  </div>
+                  <div className="text-slate-600">
+                    Status:{' '}
+                    <span className={testingMode ? 'text-emerald-700' : 'text-slate-700'}>
+                      {testingMode ? 'ON' : 'OFF'}
+                    </span>
+                  </div>
+                  <div className="text-slate-600">
+                    Current time offset: {testingDevTimeOffsetSeconds}s
+                  </div>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <button
+                      className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                      onClick={() => onSetTestingMode(!testingMode)}
+                      disabled={actionLoading}
+                    >
+                      {testingMode ? 'Disable' : 'Enable'}
+                    </button>
+                    <button
+                      className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                      onClick={() => onAdvanceTestingDays(1)}
+                      disabled={actionLoading || !testingMode}
+                    >
+                      Simulate +1 day
+                    </button>
+                    <button
+                      className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                      onClick={() => onAdvanceTestingDays(7)}
+                      disabled={actionLoading || !testingMode}
+                    >
+                      Simulate +7 days
+                    </button>
+                    <button
+                      className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
+                      onClick={onResetTestingOffset}
+                      disabled={actionLoading}
+                    >
+                      Reset time offset to 0
+                    </button>
+                  </div>
                 </div>
-                <div className="mt-2 flex flex-wrap gap-2">
-                  <button
-                    className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                    onClick={() => onSetTestingMode(!testingMode)}
-                    disabled={actionLoading}
-                  >
-                    {testingMode ? 'Disable' : 'Enable'}
-                  </button>
-                  <button
-                    className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                    onClick={() => onAdvanceTestingDays(1)}
-                    disabled={actionLoading || !testingMode}
-                  >
-                    Simulate +1 day
-                  </button>
-                  <button
-                    className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
-                    onClick={() => onAdvanceTestingDays(7)}
-                    disabled={actionLoading || !testingMode}
-                  >
-                    Simulate +7 days
-                  </button>
-                </div>
-              </div>
+              )}
               <button
                 className="px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-sm font-medium"
                 onClick={onRepairTodayStats}
