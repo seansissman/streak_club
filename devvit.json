@@ -41,16 +41,6 @@
   "triggers": {
     "onAppInstall": "/internal/triggers/on-app-install"
   },
-  "settings": {
-    "global": {
-      "dev_usernames": {
-        "type": "string",
-        "label": "DEV allowlist usernames (comma-separated, without u/)",
-        "helpText": "Comma-separated usernames, without u/, allowed to use developer-only tools.",
-        "defaultValue": "SacPistachian"
-      }
-    }
-  },
   "scripts": {
     "dev": "vite build --watch",
     "build": "vite build"
