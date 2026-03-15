@@ -4,7 +4,6 @@ import { context, getWebViewMode, requestExpandedMode } from '@devvit/web/client
 import { StrictMode, useCallback, useEffect, useMemo, useState } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
-  getCompetitionRankAtIndex,
   isCheckedInToday,
   isUserJoined,
   shouldEnableInlineCardExpand,
@@ -83,6 +82,7 @@ type LeaderboardResponse = {
   leaderboard: Array<{
     userId: string;
     displayName?: string;
+    rank: number;
     currentStreak: number;
     streakStartDayUTC: number | null;
   }>;
@@ -210,6 +210,16 @@ type CheckInFeedback = {
   earnedBadge: string | null;
 };
 
+type DerivedStreakStatus = 'active' | 'at-risk' | 'inactive';
+
+type DerivedStreakDisplay = {
+  status: DerivedStreakStatus;
+  activeStreakDays: number;
+  storedStreakDays: number;
+  dayGap: number | null;
+  note: string;
+};
+
 type SaveConfigResponse = {
   status: 'ok';
   config: ChallengeConfig;
@@ -234,16 +244,8 @@ type ValidationErrorResponse = {
 
 const MILLIS_PER_DAY = 86_400_000;
 
-const formatUtcDay = (day: number | null): string => {
-  if (day === null) {
-    return 'Never';
-  }
-
-  return new Date(day * MILLIS_PER_DAY).toISOString().slice(0, 10);
-};
-
-const formatCountdown = (target: number): string => {
-  const diffMs = Math.max(target - Date.now(), 0);
+const formatDurationHms = (durationMs: number): string => {
+  const diffMs = Math.max(durationMs, 0);
   const totalSeconds = Math.floor(diffMs / 1000);
   const hours = Math.floor(totalSeconds / 3600)
     .toString()
@@ -257,6 +259,124 @@ const formatCountdown = (target: number): string => {
 };
 
 const formatDays = (n: number): string => (n === 1 ? '1 day' : `${n} days`);
+
+const formatLastCheckinDateTimeUtc = (day: number | null): string => {
+  if (day === null) {
+    return 'Never';
+  }
+
+  const iso = new Date(day * MILLIS_PER_DAY).toISOString();
+  return `${iso.slice(0, 10)} ${iso.slice(11, 19)} UTC`;
+};
+
+const getEffectiveNowMs = (
+  nowMs: number,
+  devTime: DevTimeResponse | null
+): number => nowMs + (devTime?.devTimeOffsetSeconds ?? 0) * 1000;
+
+const getMsUntilNextUtcMidnight = (effectiveNowMs: number): number => {
+  const nextResetMs =
+    (Math.floor(effectiveNowMs / MILLIS_PER_DAY) + 1) * MILLIS_PER_DAY;
+  return Math.max(0, nextResetMs - effectiveNowMs);
+};
+
+const getMsUntilNextCheckinDue = (
+  state: UserState | null,
+  effectiveNowMs: number
+): number | null => {
+  if (!state || state.lastCheckinDayUTC === null || state.currentStreak <= 0) {
+    return null;
+  }
+
+  const preservableGapDays = state.freezeTokens > 0 ? 2 : 1;
+  const dueAtMidnightDay = state.lastCheckinDayUTC + preservableGapDays + 1;
+  const dueAtMs = dueAtMidnightDay * MILLIS_PER_DAY;
+  return Math.max(0, dueAtMs - effectiveNowMs);
+};
+
+const getEffectiveDayNumber = (
+  me: MeResponse | null,
+  devTime: DevTimeResponse | null
+): number | null => {
+  if (devTime?.effectiveDayNumber !== undefined) {
+    return devTime.effectiveDayNumber;
+  }
+
+  if (me?.nextResetUtcTimestamp) {
+    return Math.floor((me.nextResetUtcTimestamp - 1) / MILLIS_PER_DAY);
+  }
+
+  return null;
+};
+
+const deriveStreakDisplay = (
+  state: UserState | null,
+  effectiveDayNumber: number | null
+): DerivedStreakDisplay | null => {
+  if (!state) {
+    return null;
+  }
+
+  const storedStreakDays = Math.max(0, state.currentStreak);
+  if (state.lastCheckinDayUTC === null || storedStreakDays === 0) {
+    return {
+      status: 'inactive',
+      activeStreakDays: 0,
+      storedStreakDays,
+      dayGap: null,
+      note: 'No active streak yet.',
+    };
+  }
+
+  if (effectiveDayNumber === null) {
+    return {
+      status: 'active',
+      activeStreakDays: storedStreakDays,
+      storedStreakDays,
+      dayGap: null,
+      note: 'Streak status is based on your latest successful check-in.',
+    };
+  }
+
+  const dayGap = effectiveDayNumber - state.lastCheckinDayUTC;
+  if (dayGap <= 0) {
+    return {
+      status: 'active',
+      activeStreakDays: storedStreakDays,
+      storedStreakDays,
+      dayGap,
+      note: 'Checked in for the current UTC day.',
+    };
+  }
+
+  if (dayGap === 1) {
+    return {
+      status: 'at-risk',
+      activeStreakDays: storedStreakDays,
+      storedStreakDays,
+      dayGap,
+      note: 'Check in before next reset to keep this streak alive.',
+    };
+  }
+
+  if (dayGap === 2 && state.freezeTokens > 0) {
+    return {
+      status: 'at-risk',
+      activeStreakDays: storedStreakDays,
+      storedStreakDays,
+      dayGap,
+      note: 'One freeze token can preserve this streak if you check in now.',
+    };
+  }
+
+  return {
+    status: 'inactive',
+    activeStreakDays: 0,
+    storedStreakDays,
+    dayGap,
+    note: 'Streak is inactive and will restart at 1 on your next check-in.',
+  };
+};
 
 const parseBadgeThresholdInput = (value: string): number[] | null => {
   const values = value
@@ -473,7 +593,7 @@ const App = () => {
   const [devNotice, setDevNotice] = useState<string | null>(null);
   const [configNotice, setConfigNotice] = useState<string | null>(null);
   const [configError, setConfigError] = useState<string | null>(null);
-  const [countdown, setCountdown] = useState('00:00:00');
+  const [clockTickMs, setClockTickMs] = useState(() => Date.now());
   const [devTime, setDevTime] = useState<DevTimeResponse | null>(null);
   const [resetConfirmArmed, setResetConfirmArmed] = useState(false);
   const [stressReports, setStressReports] = useState<DevStressResponse['reports']>([]);
@@ -578,18 +698,12 @@ const App = () => {
   }, [loadAll]);
 
   useEffect(() => {
-    const nextReset = me?.nextResetUtcTimestamp;
-    if (!nextReset) {
-      return;
-    }
-
-    setCountdown(formatCountdown(nextReset));
     const timer = window.setInterval(() => {
-      setCountdown(formatCountdown(nextReset));
+      setClockTickMs(Date.now());
     }, 1000);
 
     return () => window.clearInterval(timer);
-  }, [me?.nextResetUtcTimestamp]);
+  }, []);
 
   useEffect(() => {
     if (!showCheckInCelebration) {
@@ -625,6 +739,26 @@ const App = () => {
   const isInlineExpandLinkVisible = shouldShowInlineExpandLink(isInlineMode);
   const shouldEnableCardExpand = shouldEnableInlineCardExpand(isInlineMode);
   const highestBadge = me?.state ? getHighestBadge(me.state.badges) : null;
+  const effectiveDayNumber = useMemo(
+    () => getEffectiveDayNumber(me, devTime),
+    [devTime, me]
+  );
+  const derivedStreakDisplay = useMemo(
+    () => deriveStreakDisplay(me?.state ?? null, effectiveDayNumber),
+    [effectiveDayNumber, me?.state]
+  );
+  const effectiveNowMs = useMemo(
+    () => getEffectiveNowMs(clockTickMs, devTime),
+    [clockTickMs, devTime]
+  );
+  const resetCountdown = useMemo(
+    () => formatDurationHms(getMsUntilNextUtcMidnight(effectiveNowMs)),
+    [effectiveNowMs]
+  );
+  const nextCheckinDueCountdown = useMemo(() => {
+    const dueMs = getMsUntilNextCheckinDue(me?.state ?? null, effectiveNowMs);
+    return dueMs === null ? '--:--:--' : formatDurationHms(dueMs);
+  }, [effectiveNowMs, me?.state]);
   const checkedInEncouragement = useMemo(() => {
     const effectiveUtcDay =
       devTime?.effectiveDayNumber ??
@@ -1180,6 +1314,16 @@ const App = () => {
             {devStatsDebug.todaySetSize}
           </div>
         )}
+        {me?.state && derivedStreakDisplay && (
+          <div className="rounded-lg border border-slate-200 bg-slate-50 p-3 text-xs text-slate-700 font-mono break-all">
+            streakStatus={derivedStreakDisplay.status} activeStreakDays=
+            {derivedStreakDisplay.activeStreakDays} storedStreakDays=
+            {derivedStreakDisplay.storedStreakDays} effectiveDay=
+            {effectiveDayNumber ?? 'n/a'} lastCheckinDay=
+            {me.state.lastCheckinDayUTC ?? 'n/a'} dayGap=
+            {derivedStreakDisplay.dayGap ?? 'n/a'}
+          </div>
+        )}
       </section>
     );
   };
@@ -1293,8 +1437,27 @@ const App = () => {
               }
             >
               <div className="text-base font-semibold text-slate-900">
-                🔥 Current Streak: {formatDays(me.state.currentStreak)}
+                🔥 Current Streak: {formatDays(derivedStreakDisplay?.activeStreakDays ?? 0)}
               </div>
+              <div className="text-sm text-slate-700">
+                Status:{' '}
+                <span className="font-medium">
+                  {derivedStreakDisplay?.status === 'active'
+                    ? 'Active'
+                    : derivedStreakDisplay?.status === 'at-risk'
+                      ? 'At risk'
+                      : 'Inactive'}
+                </span>
+              </div>
+              {derivedStreakDisplay?.status === 'inactive' &&
+                derivedStreakDisplay.storedStreakDays > 0 && (
+                  <div className="text-xs text-slate-600 mt-1">
+                    Last stored streak: {formatDays(derivedStreakDisplay.storedStreakDays)}
+                  </div>
+                )}
+              {derivedStreakDisplay?.note && (
+                <div className="text-xs text-slate-600 mt-1">{derivedStreakDisplay.note}</div>
+              )}
               <div className="text-sm text-slate-700">
                 ❄️ Freeze Tokens: {me.state.freezeTokens}
               </div>
@@ -1328,25 +1491,34 @@ const App = () => {
           )}
 
           <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 space-y-2">
-            <div className="flex items-center justify-between text-sm text-slate-600">
-              <span>Resets at 00:00 UTC</span>
-              <span className="font-mono">{countdown}</span>
+            <div className="flex items-center justify-between text-sm">
+              <span className="text-slate-500">Last check-in</span>
+              <span className="font-medium text-slate-800">
+                {formatLastCheckinDateTimeUtc(me?.state?.lastCheckinDayUTC ?? null)}
+              </span>
+            </div>
+            <div className="text-sm text-slate-600">
+              Resets at 00:00 UTC in <span className="font-mono">{resetCountdown}</span>
+            </div>
+            <div className="text-sm text-slate-600">
+              Next check-in due in{' '}
+              <span className="font-mono">{nextCheckinDueCountdown}</span>
+            </div>
+            <div className="text-sm text-slate-600">
+              {me?.state ? (
+                me.state.privacy === 'private' ? (
+                  <span>My rank: hidden (private)</span>
+                ) : me.myRank ? (
+                  <span>My rank: #{me.myRank}</span>
+                ) : (
+                  <span>My rank: unranked</span>
+                )
+              ) : (
+                <span>My rank: join to participate</span>
+              )}
             </div>
             <div className="flex items-center justify-between gap-3">
-              <div className="text-sm text-slate-600">
-                {me?.state ? (
-                  me.state.privacy === 'private' ? (
-                    <span>Private (not ranked)</span>
-                  ) : me.myRank ? (
-                    <span>My rank: #{me.myRank}</span>
-                  ) : (
-                    <span>Public</span>
-                  )
-                ) : (
-                  <span>Join to set privacy</span>
-                )}
-              </div>
-
+              <div className="text-sm text-slate-600">Leaderboard visibility</div>
               <div className="inline-flex rounded-lg border border-slate-300">
                 <button
                   className={`px-3 py-2 text-sm ${
@@ -1385,24 +1557,6 @@ const App = () => {
             </div>
           )}
 
-          {me?.state && (
-            <div
-              className={`rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-sm flex items-center justify-between ${
-                shouldEnableCardExpand ? 'cursor-pointer' : ''
-              }`}
-              onClick={
-                shouldEnableCardExpand
-                  ? (event) => requestExpandedMode(event.nativeEvent, 'app')
-                  : undefined
-              }
-            >
-              <div className="text-slate-500">Last check-in</div>
-              <div className="text-base font-semibold">
-                {formatUtcDay(me.state.lastCheckinDayUTC)}
-              </div>
-            </div>
-          )}
-
           {isInlineMode && (
             <div className="text-center text-[11px] text-slate-500">
               Tip: Tap a card to expand.
@@ -1416,14 +1570,14 @@ const App = () => {
             <p className="text-slate-600 text-sm">No ranked users yet.</p>
           ) : (
             <ol className="space-y-1.5">
-              {leaderboard.map((entry, index) => (
+              {leaderboard.map((entry) => (
                 <li
                   key={entry.userId}
                   className="flex items-center gap-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2"
                 >
                   <div className="flex min-w-0 flex-1 items-center gap-2">
                     <span className="w-7 shrink-0 text-left text-sm font-semibold text-slate-500">
-                      #{getCompetitionRankAtIndex(leaderboard, index)}
+                      #{entry.rank}
                     </span>
                     <span className="min-w-0 flex-1 truncate whitespace-nowrap text-sm font-medium text-slate-900">
                       {formatLeaderboardName(entry.displayName, entry.userId)}

@@ -1,7 +1,7 @@
 import { Hono } from 'hono';
 import type { UiResponse } from '@devvit/web/shared';
 import { context } from '@devvit/web/server';
-import { createPost } from '../core/post';
+import { createPost, isTrackerPostAccessible } from '../core/post';
 import {
   getChallengeConfig,
   isConfigSetupRequired,
@@ -21,7 +21,14 @@ menu.post('/post-create', async (c) => {
       throw new Error('subreddit context is required');
     }
 
-    const config = await getChallengeConfig(subredditId);
+    let config = await getChallengeConfig(subredditId);
+    if (
+      config.activePostId &&
+      !(await isTrackerPostAccessible(config.activePostId, subredditId))
+    ) {
+      config = await setActiveTrackerPostId(subredditId, null);
+    }
+
     if (config.activePostId) {
       return c.json<PostCreateUiResponse>(
         {

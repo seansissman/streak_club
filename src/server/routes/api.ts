@@ -3,6 +3,8 @@ import type { Context as HonoContext } from 'hono';
 import { context, reddit } from '@devvit/web/server';
 import { isModerator } from '../moderation';
 import { isStagingSubreddit } from '../core/staging_lock';
+import { isTrackerPostAccessible } from '../core/post';
+import { addCompetitionRanks } from '../core/ranking';
 import {
   computeNextResetFromDayNumber,
   ensureChallengeConfig,
@@ -279,7 +281,14 @@ api.get('/config', async (c) => {
     const isStaging = isStagingSubreddit(context);
     const utcNow = await getUtcNow(subredditId);
     const today = utcNow.utcDayNumber;
-    const config = await getChallengeConfig(subredditId);
+    let config = await getChallengeConfig(subredditId);
+    if (
+      config.activePostId &&
+      !(await isTrackerPostAccessible(config.activePostId, subredditId))
+    ) {
+      // Recover from deleted/inaccessible tracker references so mods can recreate.
+      config = await setChallengeConfig(subredditId, { activePostId: null });
+    }
     const testingMode = isStaging ? await getTestingMode(subredditId) : false;
     const testingDevTimeOffsetSeconds = isStaging
       ? await getDevTimeOffsetSeconds(subredditId)
@@ -595,9 +604,11 @@ api.get('/me', async (c) => {
 
     let myRank: number | null = null;
     if (state?.privacy === 'public') {
-      const ranking = await getLeaderboard(subredditId, 1000);
-      const rankIndex = ranking.findIndex((entry) => entry.userId === userId);
-      myRank = rankIndex >= 0 ? rankIndex + 1 : null;
+      const ranking = addCompetitionRanks(
+        await getLeaderboard(subredditId, 1000)
+      );
+      const rankEntry = ranking.find((entry) => entry.userId === userId);
+      myRank = rankEntry ? rankEntry.rank : null;
     }
 
     return c.json({
@@ -1220,11 +1231,11 @@ api.get('/leaderboard', async (c) => {
         ? 25
         : Math.min(parsedLimit, 100);
 
-    const rows = await getLeaderboard(subredditId, limit);
+    const rankedRows = addCompetitionRanks(await getLeaderboard(subredditId, limit));
     const storedUsernames = await getStoredUsernames(subredditId);
 
     const users = await Promise.all(
-      rows.map(async (row) => {
+      rankedRows.map(async (row) => {
         const storedUsername = storedUsernames[row.userId];
         let resolvedName = storedUsername;
         if (!resolvedName) {
@@ -1234,6 +1245,7 @@ api.get('/leaderboard', async (c) => {
         return {
           userId: row.userId,
           displayName: resolvedName,
+          rank: row.rank,
           currentStreak: row.currentStreak,
           streakStartDayUTC: row.streakStartDayUTC,
         };
