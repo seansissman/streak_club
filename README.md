@@ -1,48 +1,79 @@
 # Streak Club
 
-Streak Club is a pinned daily streak tracker for subreddits.
+Turn your subreddit into a daily habit engine.
 
-Members check in once per UTC day to build streaks, earn badges, unlock Freeze protection, and compete on a leaderboard.
+Streak Club is a pinned, interactive post that keeps your community coming back every day. Members check in once per day, build streaks, and stay motivated through accountability, gamification, and friendly competition.
+
+Perfect for fitness, coding, studying, journaling, or breaking negative habits — any goal-driven community.
 
 ---
 
-## How It Works
+## 🚀 Why Mods Use Streak Club
+
+- **Increase daily engagement** — give members a reason to return every day  
+- **Build accountability** — public streaks create positive pressure  
+- **Strengthen community culture** — shared goals bring members together  
+- **Make progress visible** — streaks, badges, and leaderboards reinforce consistency  
+- **Turn habits into a game** — simple actions, rewarding feedback  
+
+Streak Club transforms passive communities into active, goal-oriented ones.
+
+---
+
+## 🧩 How It Works
 
 • Members join the challenge  
 • Check in once per UTC day (resets at 00:00 UTC)  
-• Build a Current Streak  
-• Earn Freeze protection every 7 days  
-• Unlock badges at milestone streaks  
-• Compete publicly (or stay private)
+• Build a daily streak  
+• Earn Freeze Tokens every 7 days (protect against a missed day)  
+• Unlock milestone badges  
+• Climb the leaderboard (or stay private)
 
-If a member misses one day and has a Freeze Token, their streak is protected.
+Miss a day?  
+A Freeze Token can save your streak — but only if you’ve earned it.
 
 ---
 
-## Features
+## 🎯 Core Features
 
-- Daily UTC reset
+- Daily UTC check-in system
+- Streak tracking with automatic progression
 - Freeze Tokens (streak protection)
-- Milestone badges
-- Leaderboard (public users only)
+- Milestone badges (7, 30, 90, 180, 365)
+- Public leaderboard (opt-in)
 - Privacy toggle (public / private)
-- Social proof stats
-- Single active tracker per subreddit
+- Social proof stats (participants, check-ins, streaks)
+- Single active tracker per subreddit (simple + focused)
 
 ---
 
-## Moderator Setup
+## 🛠️ Moderator Setup
 
-1. Add Streak Club to your community
-2. Create the tracker post
-3. Pin the tracker post
-4. Encourage members to check in daily
+1. Add Streak Club to your subreddit  
+2. Create the tracker post  
+3. Pin the post  
+4. Invite your community to start their streak  
 
-Only one active tracker is supported per subreddit.
+That’s it — the system runs automatically.
 
 ---
 
-## FAQ
+## 💡 Best Use Cases
+
+- Fitness challenges (daily workouts, steps, gym)
+- Coding streaks (build every day)
+- Study/accountability groups
+- Writing or journaling
+- Habit building communities
+- **Breaking negative habits** (days without smoking, drinking, or other behaviors)
+
+
+If your subreddit is about **doing something consistently — or not doing something —** Streak Club fits.
+
+
+---
+
+## ❓ FAQ
 
 **What time does it reset?**  
 00:00 UTC.
@@ -51,7 +82,7 @@ Only one active tracker is supported per subreddit.
 Their streak resets unless they have a Freeze Token.
 
 **Can users stay private?**  
-Yes. Private users do not appear on the leaderboard.
+Yes — private users are hidden from the leaderboard.
 
 ---
 
