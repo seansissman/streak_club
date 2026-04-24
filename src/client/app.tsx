@@ -230,7 +230,6 @@ type SaveConfigBody = {
   title: string;
   description: string;
   badgeThresholds: number[];
-  devMode: boolean;
   confirmTemplateChange?: boolean;
 };
 
@@ -604,7 +603,6 @@ const App = () => {
   const [configTitle, setConfigTitle] = useState('');
   const [configDescription, setConfigDescription] = useState('');
   const [configBadgeThresholdsInput, setConfigBadgeThresholdsInput] = useState('');
-  const [configDevMode, setConfigDevMode] = useState(false);
   const [templateChangeConfirmOpen, setTemplateChangeConfirmOpen] = useState(false);
   const [pendingConfigSaveBody, setPendingConfigSaveBody] = useState<SaveConfigBody | null>(
     null
@@ -677,7 +675,6 @@ const App = () => {
     setConfigTitle(config.title);
     setConfigDescription(config.description);
     setConfigBadgeThresholdsInput(config.badgeThresholds.join(', '));
-    setConfigDevMode(config.devMode === true);
   }, [config]);
 
   useEffect(() => {
@@ -1153,11 +1150,9 @@ const App = () => {
       title,
       description,
       badgeThresholds,
-      devMode: configDevMode,
     });
   }, [
     configBadgeThresholdsInput,
-    configDevMode,
     configDescription,
     configTemplateId,
     configTitle,
@@ -1776,17 +1771,6 @@ const App = () => {
                   placeholder="3, 7, 14, 30"
                   disabled={actionLoading}
                 />
-              </label>
-
-              <label className="flex items-center gap-2 text-sm text-slate-700">
-                <input
-                  type="checkbox"
-                  className="h-4 w-4"
-                  checked={configDevMode}
-                  onChange={(event) => setConfigDevMode(event.target.checked)}
-                  disabled={actionLoading}
-                />
-                Enable dev tools in production (mods only)
               </label>
             </div>
 

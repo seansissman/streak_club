@@ -427,7 +427,7 @@ api.post('/config', async (c) => {
       title,
       description,
       badgeThresholds,
-      devMode: body.devMode ?? existingConfig.devMode,
+      devMode: existingConfig.devMode,
     });
 
     return c.json({

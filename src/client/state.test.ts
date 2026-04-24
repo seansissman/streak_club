@@ -68,26 +68,23 @@ describe('client check-in rendering state', () => {
     expect(shouldShowInlineExpandLink(false)).toBe(false);
   });
 
-  it('dev tools are hidden from non-mods and off by default in production', () => {
+  it('dev tools stay hidden in production', () => {
     expect(
       isDevToolsVisible({
         isModerator: false,
         isProductionBuild: true,
-        configDevMode: true,
       })
     ).toBe(false);
     expect(
       isDevToolsVisible({
         isModerator: true,
         isProductionBuild: true,
-        configDevMode: false,
       })
     ).toBe(false);
     expect(
       isDevToolsVisible({
         isModerator: true,
-        isProductionBuild: true,
-        configDevMode: true,
+        isProductionBuild: false,
       })
     ).toBe(true);
   });

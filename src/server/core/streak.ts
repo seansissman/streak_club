@@ -90,6 +90,7 @@ export type ChallengeStats = AggregateStats;
 
 export const keys = {
   challengeConfig: (subredditId: string): string => `cfg:${subredditId}`,
+  activePostId: (subredditId: string): string => `sc:${subredditId}:activePostId`,
   testingMode: (subredditId: string): string => `sc:${subredditId}:testingMode`,
   userState: (subredditId: string, userId: string): string =>
     `user:${subredditId}:${userId}`,
@@ -102,6 +103,8 @@ export const keys = {
   rateLimit: (subredditId: string, userId: string): string =>
     `rl:${subredditId}:${userId}`,
   devSettings: (subredditId: string): string => `dev:${subredditId}`,
+  devTimeOffsetSeconds: (subredditId: string): string =>
+    `sc:${subredditId}:devTimeOffsetSeconds`,
 };
 
 export const getTestingMode = async (subredditId: string): Promise<boolean> => {
@@ -323,12 +326,22 @@ export type UtcNowSnapshot = {
 export const getDevTimeOffsetSeconds = async (
   subredditId: string
 ): Promise<number> => {
-  const offset = await redis.hGet(keys.devSettings(subredditId), 'devTimeOffsetSeconds');
-  if (!offset) {
+  const legacyOffset = await redis.get(keys.devTimeOffsetSeconds(subredditId));
+  if (legacyOffset) {
+    const parsed = Number.parseInt(legacyOffset, 10);
+    return Number.isNaN(parsed) ? 0 : parsed;
+  }
+
+  const fallbackOffset = await redis.hGet(
+    keys.devSettings(subredditId),
+    'devTimeOffsetSeconds'
+  );
+  if (!fallbackOffset) {
     return 0;
   }
 
-  const parsed = Number.parseInt(offset, 10);
+  await redis.set(keys.devTimeOffsetSeconds(subredditId), fallbackOffset);
+  const parsed = Number.parseInt(fallbackOffset, 10);
   return Number.isNaN(parsed) ? 0 : parsed;
 };
 
@@ -341,6 +354,10 @@ export const setDevTimeOffsetSeconds = async (
   subredditId: string,
   devTimeOffsetSeconds: number
 ): Promise<number> => {
+  await redis.set(
+    keys.devTimeOffsetSeconds(subredditId),
+    String(devTimeOffsetSeconds)
+  );
   await redis.hSet(keys.devSettings(subredditId), {
     devTimeOffsetSeconds: String(devTimeOffsetSeconds),
     devDayOffset: String(Math.trunc(devTimeOffsetSeconds / 86_400)),
@@ -496,6 +513,15 @@ const serializeChallengeConfig = (
   createdAt: String(config.createdAt),
 });
 
+const normalizeStoredPostId = (value: string | undefined | null): string | null => {
+  if (!value) {
+    return null;
+  }
+
+  const normalized = value.trim();
+  return normalized.length === 0 ? null : normalized;
+};
+
 const defaultChallengeConfig = (now: number = Date.now()): ChallengeConfig => {
   const templateConfig = applyTemplateToConfig('custom');
   return {
@@ -560,6 +586,36 @@ export const applyTemplateToChallengeConfig = (
 ): Pick<ChallengeConfig, 'templateId' | 'title' | 'description' | 'badgeThresholds'> =>
   applyTemplateToConfig(templateId, overrides);
 
+const getStoredActivePostId = async (
+  subredditId: string,
+  configData?: Record<string, string>
+): Promise<string | null> => {
+  const legacyValue = normalizeStoredPostId(await redis.get(keys.activePostId(subredditId)));
+  if (legacyValue) {
+    return legacyValue;
+  }
+
+  const fallbackValue = normalizeStoredPostId(configData?.activePostId);
+  if (fallbackValue) {
+    await redis.set(keys.activePostId(subredditId), fallbackValue);
+  }
+
+  return fallbackValue;
+};
+
+const writeActivePostId = async (
+  subredditId: string,
+  postId: string | null
+): Promise<void> => {
+  const normalizedPostId = normalizeStoredPostId(postId);
+  if (normalizedPostId) {
+    await redis.set(keys.activePostId(subredditId), normalizedPostId);
+    return;
+  }
+
+  await redis.del(keys.activePostId(subredditId));
+};
+
 export const ensureChallengeConfig = async (
   subredditId: string
 ): Promise<ChallengeConfig> => {
@@ -568,8 +624,12 @@ export const ensureChallengeConfig = async (
   const now = Date.now();
   const parsed = deserializeChallengeConfig(existing, now);
   if (parsed) {
-    await redis.hSet(key, serializeChallengeConfig(parsed));
-    return parsed;
+    const hydrated = {
+      ...parsed,
+      activePostId: await getStoredActivePostId(subredditId, existing),
+    };
+    await redis.hSet(key, serializeChallengeConfig(hydrated));
+    return hydrated;
   }
 
   const config = defaultChallengeConfig(now);
@@ -614,6 +674,7 @@ export const setChallengeConfig = async (
     keys.challengeConfig(subredditId),
     serializeChallengeConfig(next)
   );
+  await writeActivePostId(subredditId, next.activePostId);
 
   return next;
 };
@@ -660,6 +721,7 @@ export const resetChallengeProgress = async (
     devDayOffset: '0',
     devTimeOffsetSeconds: '0',
   });
+  await redis.set(keys.devTimeOffsetSeconds(subredditId), '0');
   await redis.del(
     keys.leaderboard(subredditId),
     keys.usernames(subredditId),

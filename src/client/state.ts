@@ -19,7 +19,6 @@ export type LeaderboardRowView = {
 export type DevToolsVisibilityInput = {
   isModerator: boolean;
   isProductionBuild: boolean;
-  configDevMode: boolean;
 };
 
 export const isUserJoined = (me: MeStateView | null): boolean => Boolean(me?.state);
@@ -82,6 +81,5 @@ export const shouldEnableInlineCardExpand = (isInlineMode: boolean): boolean =>
 export const isDevToolsVisible = ({
   isModerator,
   isProductionBuild,
-  configDevMode,
 }: DevToolsVisibilityInput): boolean =>
-  isModerator && (!isProductionBuild || configDevMode === true);
+  isModerator && !isProductionBuild;
