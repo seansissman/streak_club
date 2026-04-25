@@ -1049,7 +1049,7 @@ export const App = () => {
     }
 
     return (
-      <section className="bg-white rounded-xl p-5 border border-amber-200 space-y-3">
+      <section data-testid="dev-tools-panel" className="bg-white rounded-xl p-5 border border-amber-200 space-y-3">
         <h2 className="text-lg font-semibold">UTC Reset Test Panel</h2>
         <p className="text-sm text-amber-700">
           DEV ONLY: Simulates UTC time to stress reset boundaries.
@@ -1212,7 +1212,7 @@ export const App = () => {
   }
 
   return (
-    <div className="bg-slate-100 text-slate-900 p-3 sm:p-4">
+    <div data-testid="streak-club-app" className="bg-slate-100 text-slate-900 p-3 sm:p-4">
       <div className="max-w-3xl mx-auto space-y-3">
         <section className="bg-white rounded-xl p-4 border border-slate-200 space-y-2">
           <h1 className="text-2xl font-bold">{config?.title ?? 'Streak Engine'}</h1>
@@ -1234,6 +1234,7 @@ export const App = () => {
           {!isJoined && (
             <div className="flex justify-center">
               <button
+                data-testid="join-button"
                 className="w-3/4 h-12 rounded-lg border border-blue-800/30 bg-blue-600 hover:bg-blue-700 text-white font-semibold disabled:opacity-60"
                 onClick={onJoin}
                 disabled={actionLoading}
@@ -1247,6 +1248,7 @@ export const App = () => {
             <div className="flex flex-col items-center">
               {canRenderCheckIn ? (
                 <button
+                  data-testid="check-in-button"
                   className="w-3/4 h-12 rounded-lg border border-emerald-800/30 bg-emerald-600 hover:bg-emerald-700 text-white font-semibold disabled:opacity-60"
                   onClick={onCheckIn}
                   disabled={actionLoading}
@@ -1255,7 +1257,7 @@ export const App = () => {
                 </button>
               ) : (
                 <div className="w-3/4 h-12 rounded-lg border border-emerald-300 bg-emerald-100 text-emerald-800 font-semibold flex items-center justify-center">
-                  {checkedInEncouragement}
+                  <span data-testid="checked-in-state">{checkedInEncouragement}</span>
                 </div>
               )}
               {showCheckInCelebration && (
@@ -1365,21 +1367,21 @@ export const App = () => {
             </div>
           )}
 
-          <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 space-y-2">
-            <div className="flex items-center justify-between text-sm">
+          <div data-testid="status-card" className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 space-y-2">
+            <div data-testid="last-check-in-row" className="flex items-center justify-between text-sm">
               <span className="text-slate-500">Last check-in</span>
               <span className="font-medium text-slate-800">
                 {formatLastCheckinDateTimeUtc(me?.state?.lastCheckinDayUTC ?? null)}
               </span>
             </div>
-            <div className="text-sm text-slate-600">
+            <div data-testid="reset-countdown-row" className="text-sm text-slate-600">
               Resets at 00:00 UTC in <span className="font-mono">{resetCountdown}</span>
             </div>
-            <div className="text-sm text-slate-600">
+            <div data-testid="next-check-in-due-row" className="text-sm text-slate-600">
               Next check-in due in{' '}
               <span className="font-mono">{nextCheckinDueCountdown}</span>
             </div>
-            <div className="text-sm text-slate-600">
+            <div data-testid="my-rank-row" className="text-sm text-slate-600">
               {me?.state ? (
                 me.state.privacy === 'private' ? (
                   <span>My rank: hidden (private)</span>
@@ -1392,10 +1394,11 @@ export const App = () => {
                 <span>My rank: join to participate</span>
               )}
             </div>
-            <div className="flex items-center justify-between gap-3">
+            <div data-testid="privacy-toggle" className="flex items-center justify-between gap-3">
               <div className="text-sm text-slate-600">Leaderboard visibility</div>
               <div className="inline-flex rounded-lg border border-slate-300">
                 <button
+                  data-testid="privacy-public-button"
                   className={`px-3 py-2 text-sm ${
                     me?.state?.privacy === 'public'
                       ? 'bg-slate-800 text-white'
@@ -1407,6 +1410,7 @@ export const App = () => {
                   Public
                 </button>
                 <button
+                  data-testid="privacy-private-button"
                   className={`px-3 py-2 text-sm ${
                     me?.state?.privacy === 'private'
                       ? 'bg-slate-800 text-white'
@@ -1439,12 +1443,12 @@ export const App = () => {
           )}
         </section>
 
-        <section className="bg-white rounded-xl p-4 border border-slate-200">
+        <section data-testid="leaderboard" className="bg-white rounded-xl p-4 border border-slate-200">
           <h2 className="text-lg font-semibold mb-3">Leaderboard</h2>
           {leaderboard.length === 0 ? (
             <p className="text-slate-600 text-sm">No ranked users yet.</p>
           ) : (
-            <ol className="space-y-1.5">
+            <ol data-testid="leaderboard-list" className="space-y-1.5">
               {leaderboard.map((entry) => (
                 <li
                   key={entry.userId}
@@ -1480,7 +1484,7 @@ export const App = () => {
         </section>
 
         {me?.isModerator && (
-          <section className="bg-white rounded-xl p-4 border border-slate-200 space-y-2">
+          <section data-testid="admin-panel" className="bg-white rounded-xl p-4 border border-slate-200 space-y-2">
             <h2 className="text-base font-semibold">Setup / Admin</h2>
             {config?.activePostId ? (
               <p className="text-sm text-slate-700">
@@ -1511,7 +1515,7 @@ export const App = () => {
             </p>
             <div className="pt-1">
               {isStagingConfig && (
-                <div className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
+                <div data-testid="staging-test-controls" className="mb-3 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm">
                   <div className="font-medium text-slate-800">
                     Staging test mode (staging subreddit only)
                   </div>
