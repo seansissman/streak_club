@@ -453,7 +453,7 @@ const apiRequest = async <T,>(
   return data as T;
 };
 
-const App = () => {
+export const App = () => {
   const [config, setConfig] = useState<ChallengeConfig | null>(null);
   const [participantsTotal, setParticipantsTotal] = useState(0);
   const [checkinsToday, setCheckinsToday] = useState(0);
@@ -1728,8 +1728,11 @@ const App = () => {
   );
 };
 
-createRoot(document.getElementById('root')!).render(
-  <StrictMode>
-    <App />
-  </StrictMode>
-);
+const rootElement = document.getElementById('root');
+if (rootElement) {
+  createRoot(rootElement).render(
+    <StrictMode>
+      <App />
+    </StrictMode>
+  );
+}
