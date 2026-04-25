@@ -7,6 +7,10 @@ export type RankedRow<T extends RankableRow> = T & {
   rank: number;
 };
 
+export type PrivacyScopedRow = RankableRow & {
+  privacy: 'public' | 'private';
+};
+
 export const addCompetitionRanks = <T extends RankableRow>(
   rows: T[]
 ): RankedRow<T>[] => {
@@ -27,4 +31,16 @@ export const addCompetitionRanks = <T extends RankableRow>(
       rank,
     };
   });
+};
+
+export const filterPublicRankRows = <T extends PrivacyScopedRow>(rows: T[]): T[] =>
+  rows.filter((row) => row.privacy === 'public');
+
+export const getCompetitionRankForUser = <T extends RankableRow>(
+  rows: T[],
+  userId: string
+): number | null => {
+  const rankedRows = addCompetitionRanks(rows);
+  const row = rankedRows.find((entry) => entry.userId === userId);
+  return row ? row.rank : null;
 };

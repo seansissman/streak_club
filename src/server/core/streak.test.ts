@@ -27,6 +27,34 @@ const makeUserState = (overrides: Partial<UserState> = {}): UserState => ({
 });
 
 describe('streak helpers', () => {
+  it('derives UTC day numbers from UTC timestamps instead of local offsets', () => {
+    const beforeMidnightOffset = new Date('2026-02-15T23:30:00-05:00');
+    const atMidnightUtc = new Date('2026-02-16T00:00:00.000Z');
+
+    expect(utcDayNumber(beforeMidnightOffset)).toBe(20_500);
+    expect(utcDayNumber(atMidnightUtc)).toBe(20_500);
+  });
+
+  it('rolls over the next reset exactly at 00:00 UTC', () => {
+    expect(computeNextResetUTC(new Date('2026-02-15T23:59:59.999Z'))).toBe(
+      Date.parse('2026-02-16T00:00:00.000Z')
+    );
+    expect(computeNextResetUTC(new Date('2026-02-16T00:00:00.000Z'))).toBe(
+      Date.parse('2026-02-17T00:00:00.000Z')
+    );
+  });
+
+  it('applies devTimeOffsetSeconds before computing the effective UTC day', () => {
+    const snapshot = getUtcNowFromBaseMs(
+      Date.parse('2026-02-15T23:30:00.000Z'),
+      3_600
+    );
+
+    expect(snapshot.utcMs).toBe(Date.parse('2026-02-16T00:30:00.000Z'));
+    expect(snapshot.utcDayNumber).toBe(20_500);
+    expect(snapshot.secondsUntilReset).toBe(84_600);
+  });
+
   it('first ever check-in sets streak fields to day and streak=1', () => {
     const day = utcDayNumber(new Date('2026-02-15T10:00:00.000Z'));
     const state = makeUserState();
@@ -148,6 +176,26 @@ describe('streak helpers', () => {
     expect(result.state.freezeSaves).toBe(3);
     expect(result.metadata.usedFreeze).toBe(true);
     expect(result.metadata.tokenCount).toBe(0);
+  });
+
+  it('does not consume a freeze token on a normal next-day continuation', () => {
+    const day = utcDayNumber(new Date('2026-02-15T10:00:00.000Z'));
+
+    const result = applyCheckInWithMetadata(
+      makeUserState({
+        currentStreak: 5,
+        bestStreak: 5,
+        streakStartDayUTC: day - 4,
+        lastCheckinDayUTC: day - 1,
+        freezeTokens: 1,
+      }),
+      day
+    );
+
+    expect(result.state.currentStreak).toBe(6);
+    expect(result.state.freezeTokens).toBe(1);
+    expect(result.state.freezeSaves).toBe(0);
+    expect(result.metadata.usedFreeze).toBe(false);
   });
 
   it('missed one UTC day without token resets streak', () => {
@@ -309,12 +357,15 @@ describe('streak helpers', () => {
       bestStreak: 6,
       streakStartDayUTC: day - 3,
       lastCheckinDayUTC: day,
+      freezeTokens: 1,
     });
 
     expect(canCheckIn(state, day)).toBe(false);
     expect(() => applyCheckIn(state, day)).toThrow(
       'User has already checked in for this UTC day'
     );
+    expect(state.currentStreak).toBe(4);
+    expect(state.freezeTokens).toBe(1);
   });
 
   it('computeNextResetUTC returns next 00:00 UTC timestamp', () => {

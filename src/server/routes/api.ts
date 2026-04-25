@@ -4,7 +4,12 @@ import { context, reddit } from '@devvit/web/server';
 import { isModerator } from '../moderation';
 import { isStagingSubreddit } from '../core/staging_lock';
 import { isTrackerPostAccessible } from '../core/post';
-import { addCompetitionRanks } from '../core/ranking';
+import { addCompetitionRanks, getCompetitionRankForUser } from '../core/ranking';
+import {
+  canCheckInToday,
+  checkedInToday,
+  isEffectiveDayBeforeLatestCheckIn,
+} from '../core/checkin';
 import {
   computeNextResetFromDayNumber,
   ensureChallengeConfig,
@@ -242,17 +247,6 @@ const isSortedUnique = (values: number[]): boolean => {
     }
   }
   return true;
-};
-
-const checkedInToday = (state: UserState | null, day: number): boolean =>
-  state?.lastCheckinDayUTC === day;
-
-const canCheckInToday = (state: UserState | null, day: number): boolean => {
-  if (!state || state.lastCheckinDayUTC === null) {
-    return true;
-  }
-
-  return day > state.lastCheckinDayUTC;
 };
 
 const requireModerator = async (): Promise<{ username: string }> => {
@@ -556,7 +550,7 @@ api.post('/checkin', async (c) => {
         state
       );
     }
-    if (state.lastCheckinDayUTC !== null && state.lastCheckinDayUTC > today) {
+    if (isEffectiveDayBeforeLatestCheckIn(state, today)) {
       return jsonError(
         c,
         409,
@@ -604,11 +598,10 @@ api.get('/me', async (c) => {
 
     let myRank: number | null = null;
     if (state?.privacy === 'public') {
-      const ranking = addCompetitionRanks(
-        await getLeaderboard(subredditId, 1000)
+      myRank = getCompetitionRankForUser(
+        await getLeaderboard(subredditId, 1000),
+        userId
       );
-      const rankEntry = ranking.find((entry) => entry.userId === userId);
-      myRank = rankEntry ? rankEntry.rank : null;
     }
 
     return c.json({
