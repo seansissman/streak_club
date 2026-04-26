@@ -461,6 +461,51 @@ const expectText = (container: HTMLElement, expected: string | RegExp): void => 
   expect(text(container)).toMatch(expected);
 };
 
+const queryByTestId = (container: HTMLElement, testId: string): Element | null =>
+  container.querySelector(`[data-testid="${testId}"]`);
+
+const pushPlaytestContext = (subredditName: string): void => {
+  window.history.pushState(
+    {},
+    '',
+    `/?context=${encodeURIComponent(JSON.stringify({ subredditName }))}`
+  );
+};
+
+const createBasicUserServer = (): ApiServerState =>
+  createApiServer({
+    config: makeConfig({ isStaging: false, testingMode: false }),
+    me: makeMe({ isModerator: false }),
+    devTime: null,
+  });
+
+const createNormalModeratorServer = (): ApiServerState =>
+  createApiServer({
+    config: makeConfig({ isStaging: false, testingMode: false }),
+    me: makeMe({ isModerator: true }),
+    devTime: null,
+  });
+
+const createStagingModeratorServer = (testingMode: boolean): ApiServerState =>
+  createApiServer({
+    config: makeConfig({
+      isStaging: true,
+      testingMode,
+      testingDevTimeOffsetSeconds: testingMode ? 86_400 : 0,
+    }),
+    me: makeMe({ isModerator: true }),
+    devTime: null,
+  });
+
+const createPlaytestDevContextServer = (
+  options: { isModerator?: boolean } = {}
+): ApiServerState =>
+  createApiServer({
+    config: makeConfig({ isStaging: false, testingMode: false }),
+    me: makeMe({ isModerator: options.isModerator ?? false }),
+    devTime: makeDevTime(),
+  });
+
 let mountedRoots: Root[] = [];
 
 beforeEach(() => {
@@ -711,86 +756,93 @@ describe('Streak Club App UI', () => {
     expectText(rendered.container, 'My rank: hidden (private)');
   });
 
-  it('hides moderator and staging controls from normal users and non-staging config', async () => {
-    const rendered = track(await renderApp());
+  it('hides setup, admin, staging, simulation, and playtest/dev controls from basic users', async () => {
+    const rendered = track(await renderApp(createBasicUserServer()));
     const body = text(rendered.container);
 
-    expect(body).not.toContain('Setup / Admin');
+    expect(queryByTestId(rendered.container, 'admin-panel')).toBeNull();
     expect(body).not.toContain('Challenge Config (Moderator)');
+    expect(body).not.toContain('Repair Today Stats');
     expect(body).not.toContain('Staging test mode');
+    expect(body).not.toContain('Simulate +1 day');
+    expect(body).not.toContain('Simulate +7 days');
     expect(body).not.toContain('UTC Reset Test Panel');
+    expect(queryByTestId(rendered.container, 'staging-test-controls')).toBeNull();
+    expect(queryByTestId(rendered.container, 'dev-tools-panel')).toBeNull();
   });
 
-  it('shows moderator controls and staging controls only when API state allows them', async () => {
-    const nonStaging = track(
-      await renderApp(
-        createApiServer({
-          config: makeConfig({ isStaging: false }),
-          me: makeMe({ isModerator: true }),
-        })
-      )
-    );
-    expectText(nonStaging.container, 'Setup / Admin');
-    expectText(nonStaging.container, 'Challenge Config (Moderator)');
-    expect(text(nonStaging.container)).not.toContain('Staging test mode');
+  it('shows only safe moderator setup tools for normal non-staging subreddit moderators', async () => {
+    const rendered = track(await renderApp(createNormalModeratorServer()));
+    const body = text(rendered.container);
+
+    expect(queryByTestId(rendered.container, 'admin-panel')).not.toBeNull();
+    expectText(rendered.container, 'Setup / Admin');
+    expectText(rendered.container, 'Challenge Config (Moderator)');
+    expectText(rendered.container, 'Repair Today Stats');
+    expect(body).not.toContain('Staging test mode');
+    expect(body).not.toContain('Simulate +1 day');
+    expect(body).not.toContain('Simulate +7 days');
+    expect(body).not.toContain('UTC Reset Test Panel');
+    expect(queryByTestId(rendered.container, 'staging-test-controls')).toBeNull();
+    expect(queryByTestId(rendered.container, 'dev-tools-panel')).toBeNull();
+  });
+
+  it('shows staging controls only for moderators when API marks the subreddit as staging', async () => {
+    const stagingOff = track(await renderApp(createStagingModeratorServer(false)));
+    const body = text(stagingOff.container);
+
+    expectText(stagingOff.container, 'Setup / Admin');
+    expectText(stagingOff.container, 'Challenge Config (Moderator)');
+    expectText(stagingOff.container, 'Staging test mode (staging subreddit only)');
+    expectText(stagingOff.container, 'Status: OFF');
+    expectText(stagingOff.container, 'Current time offset: 0s');
+    expect(body).toContain('Simulate +1 day');
+    expect(body).toContain('Simulate +7 days');
+    expect(findButton(stagingOff.container, /^Simulate \+1 day$/).disabled).toBe(true);
+    expect(findButton(stagingOff.container, /^Simulate \+7 days$/).disabled).toBe(true);
+    expect(body).not.toContain('UTC Reset Test Panel');
+    expect(queryByTestId(stagingOff.container, 'dev-tools-panel')).toBeNull();
 
     act(() => {
-      nonStaging.root.unmount();
+      stagingOff.root.unmount();
     });
-    mountedRoots = mountedRoots.filter((root) => root !== nonStaging.root);
+    mountedRoots = mountedRoots.filter((root) => root !== stagingOff.root);
     document.body.replaceChildren();
 
-    const staging = track(
-      await renderApp(
-        createApiServer({
-          config: makeConfig({
-            isStaging: true,
-            testingMode: true,
-            testingDevTimeOffsetSeconds: 86_400,
-          }),
-          me: makeMe({ isModerator: true }),
-        })
-      )
-    );
+    const stagingOn = track(await renderApp(createStagingModeratorServer(true)));
 
-    expectText(staging.container, 'Staging test mode (staging subreddit only)');
-    expectText(staging.container, 'Status: ON');
-    expectText(staging.container, 'Current time offset: 86400s');
+    expectText(stagingOn.container, 'Staging test mode (staging subreddit only)');
+    expectText(stagingOn.container, 'Status: ON');
+    expectText(stagingOn.container, 'Current time offset: 86400s');
+    expect(findButton(stagingOn.container, /^Simulate \+1 day$/).disabled).toBe(false);
+    expect(findButton(stagingOn.container, /^Simulate \+7 days$/).disabled).toBe(false);
+    expect(queryByTestId(stagingOn.container, 'dev-tools-panel')).toBeNull();
   });
 
-  it('shows playtest-only dev controls only with playtest context and dev API state', async () => {
+  it('shows playtest/dev tools only for the current playtest subreddit-name condition', async () => {
     const normal = track(
-      await renderApp(
-        createApiServer({
-          me: makeMe({ isModerator: true }),
-          devTime: makeDevTime(),
-        })
-      )
+      await renderApp(createPlaytestDevContextServer({ isModerator: true }))
     );
+    expectText(normal.container, 'Setup / Admin');
     expect(text(normal.container)).not.toContain('UTC Reset Test Panel');
+    expect(queryByTestId(normal.container, 'dev-tools-panel')).toBeNull();
 
     act(() => {
       normal.root.unmount();
     });
     mountedRoots = mountedRoots.filter((root) => root !== normal.root);
     document.body.replaceChildren();
-    window.history.pushState(
-      {},
-      '',
-      `/?context=${encodeURIComponent(JSON.stringify({ subredditName: 'streak_club_dev' }))}`
-    );
+    pushPlaytestContext('streak_club_dev');
 
     const playtest = track(
-      await renderApp(
-        createApiServer({
-          me: makeMe({ isModerator: true }),
-          devTime: makeDevTime(),
-        })
-      )
+      await renderApp(createPlaytestDevContextServer({ isModerator: false }))
     );
 
+    expect(text(playtest.container)).not.toContain('Setup / Admin');
     expectText(playtest.container, 'UTC Reset Test Panel');
     expectText(playtest.container, 'Simulated UTC');
+    expectText(playtest.container, 'Run Boundary Stress');
+    expectText(playtest.container, 'Reset all test data');
     expect(
       playtest.server.requests.some((request) => request.path === '/api/dev/time')
     ).toBe(true);

@@ -2,7 +2,9 @@ node_modules/
 dist/
 build/
 .env
-.env.*
+.env.local
+.env.*.local
+!.env.example
 
 # Devvit local/cache artifacts (safe to ignore)
 .devvit/

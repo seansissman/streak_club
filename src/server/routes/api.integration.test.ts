@@ -272,6 +272,41 @@ const loadServer = async (
   return { api: apiModule.api, streak };
 };
 
+const BASIC_USER_CONTEXT: Partial<MockContext> = {
+  userId: 't2_basic_user',
+  username: 'basic_user',
+  subredditId: 't5_prod',
+  subredditName: 'streak_club',
+};
+
+const NORMAL_MODERATOR_CONTEXT: Partial<MockContext> = {
+  userId: 't2_mod_user',
+  username: 'mod_user',
+  subredditId: 't5_prod',
+  subredditName: 'streak_club',
+};
+
+const STAGING_MODERATOR_CONTEXT: Partial<MockContext> = {
+  userId: 't2_mod_user',
+  username: 'mod_user',
+  subredditId: 't5_gqefuq',
+  subredditName: 'streak_club',
+};
+
+const PLAYTEST_DEV_CONTEXT: Partial<MockContext> = {
+  userId: 't2_dev_user',
+  username: 'dev_user',
+  subredditId: 't5_dev',
+  subredditName: 'streak_club_dev',
+};
+
+const validConfigBody = (): Record<string, unknown> => ({
+  templateId: 'habit_30',
+  title: 'Streak Club',
+  description: 'Build the daily streak.',
+  badgeThresholds: [7, 30],
+});
+
 afterEach(() => {
   vi.useRealTimers();
   vi.resetModules();
@@ -499,10 +534,36 @@ describe('api route integration behavior', () => {
     );
   });
 
-  it('enforces staging test-mode gates and keeps playtest-only dev routes closed outside playtest', async () => {
+  it('requires moderators for challenge config updates', async () => {
+    const { api } = await loadServer(BASIC_USER_CONTEXT);
+
+    let response = await jsonRecord(await api.request('/config', postJson(validConfigBody())));
+    expect(response.code).toBe('MODERATOR_REQUIRED');
+
+    const moderator = await loadServer(NORMAL_MODERATOR_CONTEXT);
+    reddit.addModerator('mod_user');
+    response = await jsonRecord(await moderator.api.request('/config', postJson(validConfigBody())));
+    expect(response.status).toBe('ok');
+    expect(recordField(response, 'config').title).toBe('Streak Club');
+  });
+
+  it("requires moderators for Repair Today's Stats", async () => {
+    const { api } = await loadServer(BASIC_USER_CONTEXT);
+
+    let response = await jsonRecord(await api.request('/dev/stats/repair', postJson()));
+    expect(response.code).toBe('MODERATOR_REQUIRED');
+
+    const moderator = await loadServer(NORMAL_MODERATOR_CONTEXT);
+    reddit.addModerator('mod_user');
+    response = await jsonRecord(await moderator.api.request('/dev/stats/repair', postJson()));
+    expect(response.status).toBe('ok');
+    expect(typeof response.utcDayNumber).toBe('number');
+    expect(typeof response.todaySetSize).toBe('number');
+  });
+
+  it('allows staging simulation only for moderators in the hardcoded staging subreddit with testing mode enabled', async () => {
     const { api, streak } = await loadServer({
-      subredditId: 't5_gqefuq',
-      subredditName: 'streak_club',
+      ...STAGING_MODERATOR_CONTEXT,
       username: 'not_mod',
     });
 
@@ -515,6 +576,12 @@ describe('api route integration behavior', () => {
     reddit.addModerator('mod_user');
     context.username = 'mod_user';
     context.userId = 't2_mod_user';
+
+    response = await jsonRecord(
+      await api.request('/mod/testing/advance', postJson({ daysToAdvance: 1 }))
+    );
+    expect(response.code).toBe('TESTING_MODE_REQUIRED');
+
     response = await jsonRecord(
       await api.request('/mod/testing-mode', postJson({ enabled: true }))
     );
@@ -522,19 +589,32 @@ describe('api route integration behavior', () => {
     expect(response.testingMode).toBe(true);
     expect(await redis.get(streak.keys.testingMode(context.subredditId))).toBe('on');
 
-    const devRejected = await jsonRecord(await api.request('/dev/time'));
-    expect(devRejected.code).toBe('PLAYTEST_REQUIRED');
+    response = await jsonRecord(
+      await api.request('/mod/testing/advance', postJson({ daysToAdvance: 1 }))
+    );
+    expect(response.status).toBe('ok');
+    expect(response.daysToAdvance).toBe(1);
+    expect(response.devTimeOffsetSeconds).toBe(DAY_SECONDS);
+  });
 
-    const nonStaging = await loadServer({
-      subredditId: 't5_prod',
-      subredditName: 'streak_club',
-      username: 'mod_user',
-    });
+  it('rejects staging simulation endpoints outside the hardcoded staging subreddit', async () => {
+    const nonStaging = await loadServer(NORMAL_MODERATOR_CONTEXT);
     reddit.addModerator('mod_user');
-    const nonStagingResponse = await jsonRecord(
+
+    let response = await jsonRecord(
       await nonStaging.api.request('/mod/testing-mode', postJson({ enabled: true }))
     );
-    expect(nonStagingResponse.code).toBe('STAGING_ONLY');
+    expect(response.code).toBe('STAGING_ONLY');
+
+    response = await jsonRecord(
+      await nonStaging.api.request('/mod/testing/advance', postJson({ daysToAdvance: 1 }))
+    );
+    expect(response.code).toBe('STAGING_ONLY');
+
+    response = await jsonRecord(
+      await nonStaging.api.request('/mod/testing/reset-offset', postJson())
+    );
+    expect(response.code).toBe('STAGING_ONLY');
 
     await nonStaging.streak.setTestingMode(context.subredditId, true);
     await nonStaging.streak.setDevTimeOffsetSeconds(context.subredditId, 3_600);
@@ -544,11 +624,47 @@ describe('api route integration behavior', () => {
     expect(config.testingDevTimeOffsetSeconds).toBe(0);
   });
 
-  it('allows playtest-only dev routes for playtest subreddit names', async () => {
+  it('rejects staging simulation endpoints for non-moderators in the staging subreddit', async () => {
     const { api, streak } = await loadServer({
-      subredditId: 't5_dev',
-      subredditName: 'streak_club_dev',
+      ...STAGING_MODERATOR_CONTEXT,
+      username: 'basic_user',
+      userId: 't2_basic_user',
     });
+    await streak.setTestingMode(context.subredditId, true);
+
+    let response = await jsonRecord(
+      await api.request('/mod/testing-mode', postJson({ enabled: false }))
+    );
+    expect(response.code).toBe('MODERATOR_REQUIRED');
+
+    response = await jsonRecord(
+      await api.request('/mod/testing/advance', postJson({ daysToAdvance: 1 }))
+    );
+    expect(response.code).toBe('MODERATOR_REQUIRED');
+
+    response = await jsonRecord(await api.request('/mod/testing/reset-offset', postJson()));
+    expect(response.code).toBe('MODERATOR_REQUIRED');
+  });
+
+  it('keeps playtest/dev endpoints closed outside the current playtest subreddit-name condition', async () => {
+    const { api } = await loadServer(NORMAL_MODERATOR_CONTEXT);
+    reddit.addModerator('mod_user');
+
+    const rejectedRoutes = [
+      await api.request('/dev/time'),
+      await api.request('/dev/time', postJson({ devTimeOffsetSeconds: 3_600 })),
+      await api.request('/dev/reset', postJson()),
+      await api.request('/dev/stress', postJson()),
+      await api.request('/dev/stats/debug'),
+    ];
+
+    for (const response of rejectedRoutes) {
+      expect((await jsonRecord(response)).code).toBe('PLAYTEST_REQUIRED');
+    }
+  });
+
+  it('allows playtest-only dev routes for playtest subreddit names', async () => {
+    const { api, streak } = await loadServer(PLAYTEST_DEV_CONTEXT);
 
     const response = await jsonRecord(
       await api.request('/dev/time', postJson({ devTimeOffsetSeconds: 3_600 }))

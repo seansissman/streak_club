@@ -3,13 +3,37 @@ import { test, expect, type Browser, type Locator, type Page } from '@playwright
 
 const stagingUrl = process.env.STREAK_CLUB_STAGING_URL;
 const stagingSubreddit = process.env.STREAK_CLUB_STAGING_SUBREDDIT;
+const nonStagingUrl = process.env.STREAK_CLUB_NON_STAGING_URL;
+const nonStagingSubreddit = process.env.STREAK_CLUB_NON_STAGING_SUBREDDIT;
 const modAuthPath = process.env.STREAK_CLUB_MOD_AUTH ?? 'playwright/.auth/reddit-mod.json';
 const userAuthPath = process.env.STREAK_CLUB_USER_AUTH ?? 'playwright/.auth/reddit-user.json';
+const urlTargetsSubreddit = (rawUrl: string | undefined, subreddit: string | undefined): boolean => {
+  if (!rawUrl || !subreddit) {
+    return false;
+  }
+  try {
+    const parsedUrl = new URL(rawUrl);
+    const normalizedSubreddit = subreddit.trim().toLowerCase();
+    return parsedUrl.pathname.toLowerCase().includes(`/r/${normalizedSubreddit}/`);
+  } catch {
+    return false;
+  }
+};
+
+const sameSubredditName = (left: string | undefined, right: string | undefined): boolean =>
+  Boolean(left && right && left.trim().toLowerCase() === right.trim().toLowerCase());
+
 const canRun =
   Boolean(stagingUrl) &&
   Boolean(stagingSubreddit) &&
+  urlTargetsSubreddit(stagingUrl, stagingSubreddit) &&
   existsSync(modAuthPath) &&
   existsSync(userAuthPath);
+const canRunOptionalNonStaging =
+  Boolean(nonStagingUrl) &&
+  Boolean(nonStagingSubreddit) &&
+  urlTargetsSubreddit(nonStagingUrl, nonStagingSubreddit) &&
+  !sameSubredditName(nonStagingSubreddit, stagingSubreddit);
 
 type AppHandle = {
   page: Page;
@@ -19,7 +43,7 @@ type AppHandle = {
 test.describe.configure({ mode: 'serial' });
 test.skip(
   !canRun,
-  'Set STREAK_CLUB_STAGING_URL/STREAK_CLUB_STAGING_SUBREDDIT and create both Reddit auth states before running staging smoke tests.'
+  'Set STREAK_CLUB_STAGING_URL/STREAK_CLUB_STAGING_SUBREDDIT for the staging tracker URL, and create both Reddit auth states before running staging smoke tests.'
 );
 
 const appTestId = 'streak-club-app';
@@ -63,10 +87,17 @@ const waitForAppRoot = async (page: Page): Promise<Locator> => {
   throw new Error('Streak Club app root was not found after wait.');
 };
 
-const openTracker = async (browser: Browser, storageState: string): Promise<AppHandle> => {
+const openTracker = async (
+  browser: Browser,
+  storageState: string,
+  trackerUrl: string | undefined = stagingUrl
+): Promise<AppHandle> => {
+  if (!trackerUrl) {
+    throw new Error('Tracker URL is not configured.');
+  }
   const context = await browser.newContext({ storageState });
   const page = await context.newPage();
-  await page.goto(stagingUrl ?? '', {
+  await page.goto(trackerUrl, {
     waitUntil: 'domcontentloaded',
     timeout: 60_000,
   });
@@ -106,8 +137,51 @@ const checkInIfAvailable = async (root: Locator): Promise<void> => {
 
 const expectNoDevOrAdminForUser = async (root: Locator): Promise<void> => {
   await expect(root.getByTestId('admin-panel')).toHaveCount(0);
+  await expect(root.getByTestId('challenge-config-panel')).toHaveCount(0);
+  await expect(root.getByTestId('admin-repair-today-stats-button')).toHaveCount(0);
   await expect(root.getByTestId('staging-test-controls')).toHaveCount(0);
+  await expect(root.getByTestId('staging-simulate-one-day-button')).toHaveCount(0);
+  await expect(root.getByTestId('staging-simulate-seven-days-button')).toHaveCount(0);
   await expect(root.getByTestId('dev-tools-panel')).toHaveCount(0);
+  await expect(root.getByTestId('dev-repair-today-stats-button')).toHaveCount(0);
+  await expect(root.getByText('Repair Today Stats')).toHaveCount(0);
+  await expect(root.getByText('Simulate +1 day')).toHaveCount(0);
+  await expect(root.getByText('Simulate +7 days')).toHaveCount(0);
+};
+
+const expectSafeModeratorControls = async (root: Locator): Promise<void> => {
+  await expect(root.getByTestId('admin-panel')).toBeVisible({ timeout: 30_000 });
+  await expect(root.getByTestId('challenge-config-panel')).toBeVisible({ timeout: 30_000 });
+  await expect(root.getByTestId('admin-repair-today-stats-button')).toBeVisible({
+    timeout: 30_000,
+  });
+};
+
+const expectNoStagingSimulationOrDevTools = async (root: Locator): Promise<void> => {
+  await expect(root.getByTestId('staging-test-controls')).toHaveCount(0);
+  await expect(root.getByTestId('staging-simulate-one-day-button')).toHaveCount(0);
+  await expect(root.getByTestId('staging-simulate-seven-days-button')).toHaveCount(0);
+  await expect(root.getByTestId('dev-tools-panel')).toHaveCount(0);
+  await expect(root.getByText('Simulate +1 day')).toHaveCount(0);
+  await expect(root.getByText('Simulate +7 days')).toHaveCount(0);
+};
+
+const expectStagingSimulationControls = async (root: Locator): Promise<void> => {
+  const stagingControls = root.getByTestId('staging-test-controls');
+  await expect(stagingControls).toBeVisible({ timeout: 30_000 });
+  const simulateOneDay = root.getByTestId('staging-simulate-one-day-button');
+  const simulateSevenDays = root.getByTestId('staging-simulate-seven-days-button');
+  await expect(simulateOneDay).toBeVisible();
+  await expect(simulateSevenDays).toBeVisible();
+
+  const controlsText = await stagingControls.textContent();
+  if (controlsText?.includes('Status: OFF')) {
+    await expect(simulateOneDay).toBeDisabled();
+    await expect(simulateSevenDays).toBeDisabled();
+  } else if (controlsText?.includes('Status: ON')) {
+    await expect(simulateOneDay).toBeEnabled();
+    await expect(simulateSevenDays).toBeEnabled();
+  }
 };
 
 test('normal user can load staging tracker without admin or dev tools', async ({ browser }) => {
@@ -207,10 +281,43 @@ test('privacy toggle updates and restores original visibility state', async ({ b
 
 test('moderator sees staging controls but not playtest dev tools in real staging install', async ({ browser }) => {
   const { page, root } = await openTracker(browser, modAuthPath);
-  await expect(root.getByTestId('admin-panel')).toBeVisible({ timeout: 30_000 });
-  await expect(root.getByTestId('staging-test-controls')).toBeVisible({
-    timeout: 30_000,
-  });
+  await expect(root).toContainText(/Streak|Challenge|Club/i);
+  await expectSafeModeratorControls(root);
+  await expectStagingSimulationControls(root);
   await expect(root.getByTestId('dev-tools-panel')).toHaveCount(0);
+  await expect(root.getByTestId('dev-repair-today-stats-button')).toHaveCount(0);
   await page.context().close();
+});
+
+test('optional non-staging moderator sees safe setup tools but no staging or playtest/dev tools', async ({
+  browser,
+}) => {
+  test.skip(
+    !canRunOptionalNonStaging,
+    'Set STREAK_CLUB_NON_STAGING_URL/STREAK_CLUB_NON_STAGING_SUBREDDIT to a non-staging test subreddit URL to run this optional permission check.'
+  );
+
+  const userCandidate = await openTracker(browser, userAuthPath, nonStagingUrl);
+  if (await isVisible(userCandidate.root.getByTestId('admin-panel'), 5_000)) {
+    await expect(userCandidate.root).toContainText(/Streak|Challenge|Club/i);
+    await expectSafeModeratorControls(userCandidate.root);
+    await expectNoStagingSimulationOrDevTools(userCandidate.root);
+    await userCandidate.page.context().close();
+    return;
+  }
+  await userCandidate.page.context().close();
+
+  const modCandidate = await openTracker(browser, modAuthPath, nonStagingUrl);
+  if (!(await isVisible(modCandidate.root.getByTestId('admin-panel'), 5_000))) {
+    await modCandidate.page.context().close();
+    test.skip(
+      true,
+      'Configured non-staging subreddit did not show moderator setup for either STREAK_CLUB_USER_AUTH or STREAK_CLUB_MOD_AUTH.'
+    );
+  }
+
+  await expect(modCandidate.root).toContainText(/Streak|Challenge|Club/i);
+  await expectSafeModeratorControls(modCandidate.root);
+  await expectNoStagingSimulationOrDevTools(modCandidate.root);
+  await modCandidate.page.context().close();
 });

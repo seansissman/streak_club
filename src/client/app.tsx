@@ -1143,6 +1143,7 @@ export const App = () => {
             Run Boundary Stress
           </button>
           <button
+            data-testid="dev-repair-today-stats-button"
             className="px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-sm font-medium"
             onClick={onRepairTodayStats}
             disabled={actionLoading}
@@ -1537,6 +1538,7 @@ export const App = () => {
                       {testingMode ? 'Disable' : 'Enable'}
                     </button>
                     <button
+                      data-testid="staging-simulate-one-day-button"
                       className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
                       onClick={() => onAdvanceTestingDays(1)}
                       disabled={actionLoading || !testingMode}
@@ -1544,6 +1546,7 @@ export const App = () => {
                       Simulate +1 day
                     </button>
                     <button
+                      data-testid="staging-simulate-seven-days-button"
                       className="px-3 py-2 rounded-lg border border-slate-300 bg-white text-sm"
                       onClick={() => onAdvanceTestingDays(7)}
                       disabled={actionLoading || !testingMode}
@@ -1561,6 +1564,7 @@ export const App = () => {
                 </div>
               )}
               <button
+                data-testid="admin-repair-today-stats-button"
                 className="px-3 py-2 rounded-lg border border-emerald-300 bg-emerald-50 text-emerald-700 text-sm font-medium"
                 onClick={onRepairTodayStats}
                 disabled={actionLoading}
@@ -1572,7 +1576,10 @@ export const App = () => {
         )}
 
         {me?.isModerator && (
-          <section className="bg-white rounded-xl p-5 border border-indigo-200 space-y-3">
+          <section
+            data-testid="challenge-config-panel"
+            className="bg-white rounded-xl p-5 border border-indigo-200 space-y-3"
+          >
             <h2 className="text-lg font-semibold">Challenge Config (Moderator)</h2>
             <p className="text-xs text-slate-500">Only one active tracker per subreddit.</p>
             {configNeedsSetup && (

@@ -1,47 +1,59 @@
 # Staging E2E Smoke Tests
 
-These Playwright tests are a small smoke suite for the real Reddit staging install of Streak Club. They are intentionally separate from `npm run test` and should not run in CI by default.
+These Playwright tests exercise the real Reddit staging install of Streak Club. They are intentionally separate from `npm run test` and should not run in CI by default.
 
-Use them only against the dedicated staging subreddit. The staging subreddit ID is `t5_gqefuq`.
+Use them only against explicitly configured test subreddits. The staging subreddit is `SacDevTest`, whose hardcoded staging subreddit ID is `t5_gqefuq`. Do not point these tests at production communities.
 
 ## Coverage
 
-- Normal user can load the tracker without admin or dev/playtest controls.
-- Normal user can join and check in, while tolerating already-joined or already-checked-in state.
+- Basic user can load the staging tracker without setup/admin/test/dev controls.
+- Basic user can join and check in, while tolerating already-joined or already-checked-in state.
 - Status card row order and countdown format are sane.
 - Privacy toggle updates and is restored to the original state.
-- Moderator can see setup/admin and staging controls in staging.
-- Playtest-only dev tools are not expected in the real staging install.
+- Developer/mod account can see safe setup/admin tools and staging test controls in `SacDevTest`.
+- Playtest/dev-only tools are not expected in real installed subreddit URLs.
+- Optional: a configured non-staging test subreddit moderator can see safe setup/admin tools but not staging simulation or playtest/dev tools.
 
-The optional +1 day staging simulation is manual-only for now. It mutates shared staging state and should be run only when you have a clear cleanup/reset plan.
-
-## Install Playwright
-
-If `@playwright/test` is not installed, run:
-
-```bash
-npm install --save-dev @playwright/test
-npx playwright install chromium
-```
-
-The package install could not be completed in the Codex environment because npm registry access returned `EAI_AGAIN`.
+The staging permission tests do not click `Simulate +1 day` or `Simulate +7 days`. Those controls mutate shared staging state and should be used manually only when you have a cleanup/reset plan.
 
 ## Environment
 
-Create a local `.env` or export these variables in your shell. Do not commit real auth files or secrets.
+Create a local `.env` from `.env.example` or export these variables in your shell. The Playwright test runner reads environment variables from the shell; if you use a `.env` file, load it before running the command.
 
 ```bash
-STREAK_CLUB_STAGING_URL=https://www.reddit.com/r/YOUR_STAGING_SUBREDDIT/comments/YOUR_TRACKER_POST_ID/
-STREAK_CLUB_STAGING_SUBREDDIT=YOUR_STAGING_SUBREDDIT
+STREAK_CLUB_STAGING_URL=https://www.reddit.com/r/SacDevTest/comments/YOUR_STAGING_TRACKER_POST_ID/
+STREAK_CLUB_STAGING_SUBREDDIT=SacDevTest
+STREAK_CLUB_NON_STAGING_URL=https://www.reddit.com/r/streak_club_dev/comments/YOUR_NON_STAGING_TRACKER_POST_ID/
+STREAK_CLUB_NON_STAGING_SUBREDDIT=streak_club_dev
 STREAK_CLUB_MOD_AUTH=playwright/.auth/reddit-mod.json
 STREAK_CLUB_USER_AUTH=playwright/.auth/reddit-user.json
 ```
 
-`STREAK_CLUB_STAGING_URL` should point to the actual staging tracker/post URL, not a production subreddit and not Playtest.
+Required for staging tests:
+
+- `STREAK_CLUB_STAGING_URL` points to the Streak Club tracker post in `SacDevTest`.
+- `STREAK_CLUB_STAGING_SUBREDDIT` is `SacDevTest`.
+- `STREAK_CLUB_MOD_AUTH` points to the developer/mod account auth state.
+- `STREAK_CLUB_USER_AUTH` points to the normal user auth state.
+
+Optional non-staging moderator test:
+
+- Set `STREAK_CLUB_NON_STAGING_URL` and `STREAK_CLUB_NON_STAGING_SUBREDDIT` to a real, non-production, non-staging test subreddit, such as `r/streak_club_dev`.
+- The test first tries `STREAK_CLUB_USER_AUTH`, which is useful when the normal user is a moderator of that non-staging subreddit but is still the basic user in `SacDevTest`.
+- If that account is not a moderator there, the test tries `STREAK_CLUB_MOD_AUTH`.
+- If neither auth state is a moderator of the configured non-staging subreddit, the optional test skips with a clear message.
+
+## Accounts
+
+- In `SacDevTest`, `STREAK_CLUB_MOD_AUTH` should be a subreddit moderator.
+- In `SacDevTest`, `STREAK_CLUB_USER_AUTH` should be a basic non-moderator user.
+- In the optional non-staging subreddit, at least one configured auth state should be a moderator if you want that optional test to run.
+
+Do not create fake Reddit accounts for this suite. Use existing test accounts only.
 
 ## Save Auth State
 
-The auth setup does not automate Reddit credentials. It is a plain Node script that opens Reddit in a headed Chromium browser and waits for you to manually log in with the existing Reddit account.
+The auth setup does not automate Reddit credentials. It opens Reddit in headed Chromium and waits for you to manually log in with existing Reddit accounts.
 
 ```bash
 npm run test:e2e:auth
@@ -56,14 +68,20 @@ Steps:
 5. Log in manually to Reddit if needed.
 6. Return to the terminal and press Enter to save `playwright/.auth/reddit-user.json`.
 
-The auth directory is ignored by git.
+Never commit files under `playwright/.auth/`. They contain live browser auth state and are ignored by git.
 
 ## Run Staging Smoke Tests
 
-After Playwright is installed, env vars are set, and auth state files exist:
+After env vars are set and auth state files exist:
 
 ```bash
 npm run test:e2e:staging
+```
+
+Playwright runs headless by default because this is faster, less flaky in automation, and avoids opening Reddit browser windows unless you ask for them. To watch the browser:
+
+```bash
+npx playwright test e2e/staging.smoke.spec.ts --headed
 ```
 
 The tests run serially and collect screenshots, videos, and traces on failure under Playwright's normal output folders. Those folders are ignored by git.
