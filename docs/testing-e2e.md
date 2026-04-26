@@ -18,7 +18,7 @@ The staging permission tests do not click `Simulate +1 day` or `Simulate +7 days
 
 ## Environment
 
-Create a local `.env` from `.env.example` or export these variables in your shell. The Playwright test runner reads environment variables from the shell; if you use a `.env` file, load it before running the command.
+Create a local `.env` from `.env.example`. The Playwright config, auth setup script, and staging smoke spec load `.env` automatically with `dotenv`.
 
 ```bash
 STREAK_CLUB_STAGING_URL=https://www.reddit.com/r/SacDevTest/comments/YOUR_STAGING_TRACKER_POST_ID/
@@ -55,6 +55,13 @@ Do not create fake Reddit accounts for this suite. Use existing test accounts on
 
 The auth setup does not automate Reddit credentials. It opens Reddit in headed Chromium and waits for you to manually log in with existing Reddit accounts.
 
+Workflow:
+
+1. Copy `.env.example` to `.env`.
+2. Edit `.env` with the tracker URLs, subreddit names, and auth-state paths for your test setup.
+3. Run `npm run test:e2e:auth`.
+4. Run `npm run test:e2e:staging`.
+
 ```bash
 npm run test:e2e:auth
 ```
@@ -72,7 +79,7 @@ Never commit files under `playwright/.auth/`. They contain live browser auth sta
 
 ## Run Staging Smoke Tests
 
-After env vars are set and auth state files exist:
+After `.env` is edited and auth state files exist:
 
 ```bash
 npm run test:e2e:staging
@@ -85,3 +92,15 @@ npx playwright test e2e/staging.smoke.spec.ts --headed
 ```
 
 The tests run serially and collect screenshots, videos, and traces on failure under Playwright's normal output folders. Those folders are ignored by git.
+
+## Troubleshooting
+
+If you need to override a value temporarily, you can still set PowerShell environment variables before running a command:
+
+```powershell
+$env:STREAK_CLUB_STAGING_URL="https://www.reddit.com/r/SacDevTest/comments/YOUR_STAGING_TRACKER_POST_ID/"
+$env:STREAK_CLUB_STAGING_SUBREDDIT="SacDevTest"
+npm run test:e2e:staging
+```
+
+Shell variables take precedence over values from `.env`.

@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { existsSync } from 'node:fs';
 import { test, expect, type Browser, type Locator, type Page } from '@playwright/test';
 

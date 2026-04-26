@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import { mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
 import { createInterface } from 'node:readline/promises';
