@@ -65,7 +65,7 @@ That’s it — the system runs automatically.
 - Study/accountability groups
 - Writing or journaling
 - Habit building communities
-- Habit-breaking communities (days without smoking, drinking, or other behaviors)
+- Habit-breaking communities and personal accountability challenges
 
 
 If your subreddit is about **doing something consistently — or not doing something —** Streak Club fits.
@@ -84,6 +84,36 @@ Their streak resets unless they have a Freeze Token.
 **Can users stay private?**  
 Yes — private users are hidden from the leaderboard.
 
+
 ---
 
+## Support
+
+If you have questions, feedback, or issues with Streak Club, please contact the developer through Reddit or open an issue in the project repository if available.
+
+
+---
+
+## Data & Privacy
+
+Streak Club stores only the information needed to run the tracker, including participation status, check-in history, streak counts, Freeze Tokens, leaderboard visibility, and subreddit-level tracker settings.
+
+Users can choose whether they appear on the public leaderboard using the privacy toggle. Private users are excluded from the public leaderboard.
+
+
+---
+
+## Changelog
+
+### Initial Public Release
+
+- Daily UTC check-ins
+- Streak tracking
+- Freeze Tokens
+- Milestone badges
+- Public leaderboard with privacy toggle
+- Moderator setup tools
+- Social proof stats
+
 Built with Devvit.
+
