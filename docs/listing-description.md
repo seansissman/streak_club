@@ -4,7 +4,7 @@ Streak Club is a pinned, interactive check-in post that keeps your community com
 
 Members show up daily, build momentum, and stay motivated by not breaking the chain.
 
-Perfect for fitness, coding, studying, journaling, or breaking negative habits.
+Perfect for fitness, coding, studying, journaling, or habit-breaking communities.
 
 Why it works:
 - Daily check-ins create habit and retention  

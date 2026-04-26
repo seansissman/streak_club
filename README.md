@@ -40,7 +40,7 @@ A Freeze Token can save your streak — but only if you’ve earned it.
 - Streak tracking with automatic progression
 - Freeze Tokens (streak protection)
 - Milestone badges (7, 30, 90, 180, 365)
-- Public leaderboard (opt-in)
+- Public leaderboard with privacy toggle
 - Privacy toggle (public / private)
 - Social proof stats (participants, check-ins, streaks)
 - Single active tracker per subreddit (simple + focused)
@@ -65,7 +65,7 @@ That’s it — the system runs automatically.
 - Study/accountability groups
 - Writing or journaling
 - Habit building communities
-- **Breaking negative habits** (days without smoking, drinking, or other behaviors)
+- Habit-breaking communities (days without smoking, drinking, or other behaviors)
 
 
 If your subreddit is about **doing something consistently — or not doing something —** Streak Club fits.
