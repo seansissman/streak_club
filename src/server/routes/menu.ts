@@ -11,8 +11,9 @@ import { isModerator } from '../moderation';
 
 export const menu = new Hono();
 
-type PostCreateUiResponse = UiResponse & {
-  activePostId?: string;
+const toRedditCommentsUrl = (postId: string): string => {
+  const barePostId = postId.startsWith('t3_') ? postId.slice(3) : postId;
+  return `https://reddit.com/r/${context.subredditName}/comments/${barePostId}`;
 };
 
 menu.post('/post-create', async (c) => {
@@ -40,11 +41,10 @@ menu.post('/post-create', async (c) => {
     }
 
     if (config.activePostId) {
-      return c.json<PostCreateUiResponse>(
+      return c.json<UiResponse>(
         {
           showToast: 'Opened the existing Streak Club tracker.',
-          activePostId: config.activePostId,
-          navigateTo: `https://reddit.com/r/${context.subredditName}/comments/${config.activePostId}`,
+          navigateTo: toRedditCommentsUrl(config.activePostId),
         },
         200
       );
@@ -55,12 +55,11 @@ menu.post('/post-create', async (c) => {
     if (needsSetup) {
       const setupPost = await createPost('Set up your challenge template');
       await setActiveTrackerPostId(subredditId, setupPost.id);
-      return c.json<PostCreateUiResponse>(
+      return c.json<UiResponse>(
         {
-          navigateTo: `https://reddit.com/r/${context.subredditName}/comments/${setupPost.id}`,
+          navigateTo: toRedditCommentsUrl(setupPost.id),
           showToast:
             'Complete setup in the tracker post before inviting members.',
-          activePostId: setupPost.id,
         },
         200
       );
@@ -69,13 +68,12 @@ menu.post('/post-create', async (c) => {
     const post = await createPost(config.title);
     await setActiveTrackerPostId(subredditId, post.id);
 
-    return c.json<PostCreateUiResponse>(
+    return c.json<UiResponse>(
       {
-        navigateTo: `https://reddit.com/r/${context.subredditName}/comments/${post.id}`,
+        navigateTo: toRedditCommentsUrl(post.id),
         showToast: hadStaleActivePost
           ? 'The previous tracker was no longer accessible, so a new one was created.'
           : 'Created a new Streak Club tracker.',
-        activePostId: post.id,
       },
       200
     );

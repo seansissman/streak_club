@@ -383,6 +383,19 @@ const stringField = (record: Record<string, unknown>, field: string): string => 
   return value;
 };
 
+const validUiResponseKeys = ['navigateTo', 'showToast', 'showForm'];
+
+const expectUiResponseKeys = (
+  body: Record<string, unknown>,
+  expectedKeys: string[]
+): void => {
+  const actualKeys = Object.keys(body).sort();
+  for (const key of actualKeys) {
+    expect(validUiResponseKeys).toContain(key);
+  }
+  expect(actualKeys).toEqual(expectedKeys.slice().sort());
+};
+
 const setActor = (userId: string, username: string): void => {
   context.userId = userId;
   context.username = username;
@@ -407,6 +420,7 @@ describe('api route integration behavior', () => {
     const body = await jsonRecord(response);
 
     expect(response.status).toBe(403);
+    expectUiResponseKeys(body, ['showToast']);
     expect(body.showToast).toBe(
       'Only subreddit moderators can create or open the Streak Club tracker.'
     );
@@ -428,12 +442,47 @@ describe('api route integration behavior', () => {
     const body = await jsonRecord(response);
 
     expect(response.status).toBe(200);
+    expectUiResponseKeys(body, ['navigateTo', 'showToast']);
     expect(body.showToast).toBe('Opened the existing Streak Club tracker.');
-    expect(body.activePostId).toBe('t3_existing');
     expect(body.navigateTo).toBe(
-      'https://reddit.com/r/streak_club/comments/t3_existing'
+      'https://reddit.com/r/streak_club/comments/existing'
     );
     expect(reddit.posts.size).toBe(1);
+  });
+
+  it('creates a new tracker from the menu route with only valid UiResponse fields', async () => {
+    const { menu, streak } = await loadServer(NORMAL_MODERATOR_CONTEXT);
+    reddit.addModerator('mod_user');
+    await configureChallenge(streak);
+
+    const response = await menu.request('/post-create', postJson());
+    const body = await jsonRecord(response);
+
+    expect(response.status).toBe(200);
+    expectUiResponseKeys(body, ['navigateTo', 'showToast']);
+    expect(body.showToast).toBe('Created a new Streak Club tracker.');
+    expect(body.navigateTo).toBe('https://reddit.com/r/streak_club/comments/post1');
+    expect(await redis.get(streak.keys.activePostId(context.subredditId))).toBe(
+      't3_post1'
+    );
+  });
+
+  it('returns only valid UiResponse fields when setup is still required', async () => {
+    const { menu, streak } = await loadServer(NORMAL_MODERATOR_CONTEXT);
+    reddit.addModerator('mod_user');
+
+    const response = await menu.request('/post-create', postJson());
+    const body = await jsonRecord(response);
+
+    expect(response.status).toBe(200);
+    expectUiResponseKeys(body, ['navigateTo', 'showToast']);
+    expect(body.showToast).toBe(
+      'Complete setup in the tracker post before inviting members.'
+    );
+    expect(body.navigateTo).toBe('https://reddit.com/r/streak_club/comments/post1');
+    expect(await redis.get(streak.keys.activePostId(context.subredditId))).toBe(
+      't3_post1'
+    );
   });
 
   it('clears a deleted tracker id and recreates from the menu route', async () => {
@@ -446,11 +495,11 @@ describe('api route integration behavior', () => {
     const body = await jsonRecord(response);
 
     expect(response.status).toBe(200);
+    expectUiResponseKeys(body, ['navigateTo', 'showToast']);
     expect(body.showToast).toBe(
       'The previous tracker was no longer accessible, so a new one was created.'
     );
-    expect(body.activePostId).toBe('t3_post1');
-    expect(body.navigateTo).toBe('https://reddit.com/r/streak_club/comments/t3_post1');
+    expect(body.navigateTo).toBe('https://reddit.com/r/streak_club/comments/post1');
     expect(await redis.get(streak.keys.activePostId(context.subredditId))).toBe(
       't3_post1'
     );
