@@ -1509,6 +1509,10 @@ export const App = () => {
               After posting, pin this tracker post in your subreddit.
             </p>
             <p className="text-xs text-slate-600">
+              If this tracker post is deleted, use the subreddit moderator menu action
+              "Create/Open Streak Club Tracker" to recreate it.
+            </p>
+            <p className="text-xs text-slate-600">
               Changing templates does not change streak rules (copy-only).
             </p>
             <p className="text-xs text-slate-600">

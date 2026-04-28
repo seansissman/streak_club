@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
+import { readFileSync } from 'node:fs';
 
 type MockContext = {
   userId: string;
@@ -263,13 +264,14 @@ const resetHarness = (): void => {
 
 const loadServer = async (
   overrides: Partial<MockContext> = {}
-): Promise<{ api: ApiRoute; streak: StreakCore }> => {
+): Promise<{ api: ApiRoute; menu: ApiRoute; streak: StreakCore }> => {
   vi.resetModules();
   resetHarness();
   Object.assign(context, overrides);
   const apiModule = await import('./api');
+  const menuModule = await import('./menu');
   const streak = await import('../core/streak');
-  return { api: apiModule.api, streak };
+  return { api: apiModule.api, menu: menuModule.menu, streak };
 };
 
 const BASIC_USER_CONTEXT: Partial<MockContext> = {
@@ -306,6 +308,15 @@ const validConfigBody = (): Record<string, unknown> => ({
   description: 'Build the daily streak.',
   badgeThresholds: [7, 30],
 });
+
+const configureChallenge = async (streak: StreakCore): Promise<void> => {
+  await streak.setChallengeConfig(context.subredditId, {
+    templateId: 'habit_30',
+    title: 'Streak Club',
+    description: 'Build the daily streak.',
+    badgeThresholds: [7, 30],
+  });
+};
 
 afterEach(() => {
   vi.useRealTimers();
@@ -382,6 +393,69 @@ const advanceWallClock = (seconds: number): void => {
 };
 
 describe('api route integration behavior', () => {
+  it('keeps the subreddit moderator menu label specific to tracker recovery', () => {
+    const configText = readFileSync('devvit.json', 'utf8');
+
+    expect(configText).toContain('"label": "Create/Open Streak Club Tracker"');
+    expect(configText).not.toContain('"label": "Create a new post"');
+  });
+
+  it('rejects non-moderators using the tracker creation menu route', async () => {
+    const { menu } = await loadServer(BASIC_USER_CONTEXT);
+
+    const response = await menu.request('/post-create', postJson());
+    const body = await jsonRecord(response);
+
+    expect(response.status).toBe(403);
+    expect(body.showToast).toBe(
+      'Only subreddit moderators can create or open the Streak Club tracker.'
+    );
+    expect(reddit.posts.size).toBe(0);
+  });
+
+  it('opens the existing tracker from the menu route without creating a duplicate', async () => {
+    const { menu, streak } = await loadServer(NORMAL_MODERATOR_CONTEXT);
+    reddit.addModerator('mod_user');
+    await configureChallenge(streak);
+    await streak.setActiveTrackerPostId(context.subredditId, 't3_existing');
+    reddit.posts.set('t3_existing', {
+      id: 't3_existing',
+      subredditId: context.subredditId,
+      title: 'Streak Club',
+    });
+
+    const response = await menu.request('/post-create', postJson());
+    const body = await jsonRecord(response);
+
+    expect(response.status).toBe(200);
+    expect(body.showToast).toBe('Opened the existing Streak Club tracker.');
+    expect(body.activePostId).toBe('t3_existing');
+    expect(body.navigateTo).toBe(
+      'https://reddit.com/r/streak_club/comments/t3_existing'
+    );
+    expect(reddit.posts.size).toBe(1);
+  });
+
+  it('clears a deleted tracker id and recreates from the menu route', async () => {
+    const { menu, streak } = await loadServer(NORMAL_MODERATOR_CONTEXT);
+    reddit.addModerator('mod_user');
+    await configureChallenge(streak);
+    await streak.setActiveTrackerPostId(context.subredditId, 't3_deleted');
+
+    const response = await menu.request('/post-create', postJson());
+    const body = await jsonRecord(response);
+
+    expect(response.status).toBe(200);
+    expect(body.showToast).toBe(
+      'The previous tracker was no longer accessible, so a new one was created.'
+    );
+    expect(body.activePostId).toBe('t3_post1');
+    expect(body.navigateTo).toBe('https://reddit.com/r/streak_club/comments/t3_post1');
+    expect(await redis.get(streak.keys.activePostId(context.subredditId))).toBe(
+      't3_post1'
+    );
+  });
+
   it('joins a new user once, stores username, and preserves default public privacy', async () => {
     const { api, streak } = await loadServer();
 

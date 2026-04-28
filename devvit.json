@@ -30,7 +30,7 @@
   "menu": {
     "items": [
       {
-        "label": "Create a new post",
+        "label": "Create/Open Streak Club Tracker",
         "description": "streak-club",
         "location": "subreddit",
         "forUserType": "moderator",

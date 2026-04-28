@@ -767,6 +767,8 @@ describe('Streak Club App UI', () => {
     expect(body).not.toContain('Simulate +1 day');
     expect(body).not.toContain('Simulate +7 days');
     expect(body).not.toContain('UTC Reset Test Panel');
+    expect(body).not.toContain('If this tracker post is deleted');
+    expect(body).not.toContain('Create/Open Streak Club Tracker');
     expect(queryByTestId(rendered.container, 'staging-test-controls')).toBeNull();
     expect(queryByTestId(rendered.container, 'dev-tools-panel')).toBeNull();
   });
@@ -777,6 +779,8 @@ describe('Streak Club App UI', () => {
 
     expect(queryByTestId(rendered.container, 'admin-panel')).not.toBeNull();
     expectText(rendered.container, 'Setup / Admin');
+    expectText(rendered.container, 'If this tracker post is deleted');
+    expectText(rendered.container, 'Create/Open Streak Club Tracker');
     expectText(rendered.container, 'Challenge Config (Moderator)');
     expectText(rendered.container, 'Repair Today Stats');
     expect(body).not.toContain('Staging test mode');
