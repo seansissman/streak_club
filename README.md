@@ -6,9 +6,10 @@ Streak Club is a pinned, interactive post that keeps your community coming back 
 
 Perfect for fitness, coding, studying, journaling, or breaking negative habits — any goal-driven community.
 
-![Streak Club check-in screen](docs/assets/streak-club-hero.png)
-
-![Streak Club leaderboard and stats](docs/assets/streak-club-stats.png)
+<p align="center">
+  <img src="docs/assets/streak-club-hero.png" alt="Streak Club check-in screen" width="300">
+  <img src="docs/assets/streak-club-stats.png" alt="Streak Club leaderboard and stats" width="300">
+</p>
 
 ---
 
