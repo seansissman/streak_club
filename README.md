@@ -6,6 +6,10 @@ Streak Club is a pinned, interactive post that keeps your community coming back 
 
 Perfect for fitness, coding, studying, journaling, or breaking negative habits — any goal-driven community.
 
+![Streak Club check-in screen](docs/assets/streak-club-hero.png)
+
+![Streak Club leaderboard and stats](docs/assets/streak-club-leaderboard-stats.png)
+
 ---
 
 ## 🚀 Why Mods Use Streak Club
