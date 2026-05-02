@@ -8,7 +8,7 @@ Perfect for fitness, coding, studying, journaling, or breaking negative habits â
 
 ![Streak Club check-in screen](docs/assets/streak-club-hero.png)
 
-![Streak Club leaderboard and stats](docs/assets/streak-club-leaderboard-stats.png)
+![Streak Club leaderboard and stats](docs/assets/streak-club-stats.png)
 
 ---
 
