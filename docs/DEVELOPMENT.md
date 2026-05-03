@@ -2,9 +2,9 @@
 
 This document contains setup and local development instructions for contributors.
 
-# Streak Engine
+# Streak Club
 
-Streak Engine is a Devvit Web app for running and tracking streak-based gameplay on Reddit.
+Streak Club is a Devvit Web app for running and tracking streak-based gameplay on Reddit.
 
 ## WSL Setup (Ubuntu + bash)
 

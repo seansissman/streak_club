@@ -577,7 +577,7 @@ describe('Streak Club App UI', () => {
       await renderApp(createApiServer({ configError: 'Config exploded' }))
     );
 
-    expectText(rendered.container, 'Streak Engine');
+    expectText(rendered.container, 'Streak Club');
     expectText(rendered.container, 'Config exploded');
   });
 

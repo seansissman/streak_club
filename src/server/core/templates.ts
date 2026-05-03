@@ -17,7 +17,7 @@ export const TEMPLATES: ChallengeTemplate[] = [
   {
     id: 'custom',
     label: 'Custom',
-    title: 'Streak Engine',
+    title: 'Streak Club',
     description: 'Join and check in daily. Reset time is 00:00 UTC.',
     badgeThresholds: [3, 7, 14, 30],
   },

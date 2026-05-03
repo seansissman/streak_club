@@ -1216,7 +1216,7 @@ export const App = () => {
     <div data-testid="streak-club-app" className="bg-slate-100 text-slate-900 p-3 sm:p-4">
       <div className="max-w-3xl mx-auto space-y-3">
         <section className="bg-white rounded-xl p-4 border border-slate-200 space-y-2">
-          <h1 className="text-2xl font-bold">{config?.title ?? 'Streak Engine'}</h1>
+          <h1 className="text-2xl font-bold">{config?.title ?? 'Streak Club'}</h1>
           <p className="text-slate-700">
             {config?.description ?? 'Join and check in daily at 00:00 UTC.'}
             {isInlineExpandLinkVisible && (
