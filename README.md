@@ -110,6 +110,18 @@ Users can choose whether they appear on the public leaderboard using the privacy
 
 ## Changelog
 
+### Pending / Next Public Release
+
+- Added README screenshots showing the tracker experience
+- Updated README presentation for moderators evaluating the app
+
+### 0.0.36 — Current Public Release
+
+- Fixed the “Create/Open Streak Club Tracker” subreddit menu action
+- Improved tracker post URL handling for Reddit post IDs
+- Preserved existing tracker create/open/recovery behavior
+- Added integration test coverage for tracker creation and recovery
+
 ### Initial Public Release
 
 - Daily UTC check-ins
