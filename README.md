@@ -6,10 +6,13 @@ Streak Club is a pinned, interactive post that keeps your community coming back 
 
 Perfect for fitness, coding, studying, journaling, or breaking negative habits — any goal-driven community.
 
-<p align="center">
-  <img src="docs/assets/streak-club-hero.png" alt="Streak Club check-in screen" width="300">
-  <img src="docs/assets/streak-club-stats.png" alt="Streak Club leaderboard and stats" width="300">
-</p>
+### Daily check-ins
+
+![Streak Club check-in screen](docs/assets/streak-club-hero.png)
+
+### Leaderboard and stats
+
+![Streak Club leaderboard and stats](docs/assets/streak-club-stats.png)
 
 ---
 
@@ -110,12 +113,20 @@ Users can choose whether they appear on the public leaderboard using the privacy
 
 ## Changelog
 
-### Pending / Next Public Release
+### 0.0.39 — Pending / Next Public Release
+
+- Fixed README screenshot rendering on the Reddit developers page
+- Replaced raw HTML screenshot tags with standard Markdown image syntax
+- Kept screenshots visible in public-facing documentation without relying on HTML rendering
+
+### 0.0.38 — Current Public Release
 
 - Added README screenshots showing the tracker experience
 - Updated README presentation for moderators evaluating the app
+- Updated visible app branding from “Streak Engine” to “Streak Club”
+- Updated tracker-facing default title/copy to use “Streak Club”
 
-### 0.0.36 — Current Public Release
+### 0.0.36
 
 - Fixed the “Create/Open Streak Club Tracker” subreddit menu action
 - Improved tracker post URL handling for Reddit post IDs
