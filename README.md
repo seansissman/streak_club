@@ -6,13 +6,9 @@ Streak Club is a pinned, interactive post that keeps your community coming back 
 
 Perfect for fitness, coding, studying, journaling, or breaking negative habits — any goal-driven community.
 
-### Daily check-ins
+### Screenshots
 
-![Streak Club check-in screen](https://raw.githubusercontent.com/seansissman/streak_club/main/docs/assets/streak-club-hero-readme.png)
-
-### Leaderboard and stats
-
-![Streak Club leaderboard and stats](https://raw.githubusercontent.com/seansissman/streak_club/main/docs/assets/streak-club-stats-readme.png)
+![Streak Club screenshots](https://raw.githubusercontent.com/seansissman/streak_club/main/docs/assets/streak-club-screenshots-readme.png)
 
 ---
 
