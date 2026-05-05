@@ -8,11 +8,11 @@ Perfect for fitness, coding, studying, journaling, or breaking negative habits â
 
 ### Daily check-ins
 
-![Streak Club check-in screen](docs/assets/streak-club-hero.png)
+![Streak Club check-in screen](https://raw.githubusercontent.com/seansissman/streak_club/main/docs/assets/streak-club-hero-readme.png)
 
 ### Leaderboard and stats
 
-![Streak Club leaderboard and stats](docs/assets/streak-club-stats.png)
+![Streak Club leaderboard and stats](https://raw.githubusercontent.com/seansissman/streak_club/main/docs/assets/streak-club-stats-readme.png)
 
 ---
 
